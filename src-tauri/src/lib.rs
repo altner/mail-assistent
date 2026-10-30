@@ -1,7 +1,10 @@
+pub mod ai;
 pub mod db;
 pub mod error;
+pub mod imap;
 pub mod mail;
 pub mod paths;
+pub mod secrets;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
