@@ -57,6 +57,7 @@ pub fn run() {
             commands::get_thread,
             commands::get_ai_settings,
             commands::save_ai_settings,
+            commands::save_draft_ai_settings,
             commands::test_ai,
             commands::list_categories,
             commands::create_category,

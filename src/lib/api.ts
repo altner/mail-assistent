@@ -5,6 +5,7 @@ import type {
   AiOverview,
   AiSettings,
   AiSettingsView,
+  DraftAiSettings,
   AppInfo,
   Category,
   CategoryInput,
@@ -52,8 +53,10 @@ export const api = {
   /** apiKey: undefined = unverändert, "" = löschen */
   saveAiSettings: (settings: AiSettings, apiKey?: string) =>
     invoke<AiSettingsView>("save_ai_settings", { settings, apiKey: apiKey ?? null }),
-  testAi: (url: string, apiKey?: string) =>
-    invoke<string[]>("test_ai", { url, apiKey: apiKey || null }),
+  testAi: (url: string, apiKey?: string, forDrafts = false) =>
+    invoke<string[]>("test_ai", { url, apiKey: apiKey || null, forDrafts }),
+  saveDraftAiSettings: (settings: DraftAiSettings, apiKey?: string) =>
+    invoke<AiSettingsView>("save_draft_ai_settings", { settings, apiKey: apiKey ?? null }),
 
   listCategories: () => invoke<Category[]>("list_categories"),
   createCategory: (input: CategoryInput) => invoke<number>("create_category", { input }),

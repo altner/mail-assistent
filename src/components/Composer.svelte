@@ -29,6 +29,12 @@
   let aiBusy = $state(false);
   let linkUrl = $state<string | null>(null);
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  /** false, wenn der Entwurfs-Server nicht auf diesem Rechner läuft */
+  let aiLocal = $state(true);
+
+  $effect(() => {
+    api.getAiSettings().then((s) => (aiLocal = s.draftIsLocal), () => {});
+  });
 
   const accountName = $derived(store.accounts.find((a) => a.id === draft?.accountId)?.name ?? "");
   const identity = $derived(identities.find((i) => i.id === identityId) ?? null);
@@ -334,8 +340,13 @@
 
     <div class="ai">
       <input bind:value={aiHint} placeholder="Hinweis für die KI, z. B. „kurz zusagen“" aria-label="Hinweis für die KI" disabled={aiBusy || busy} />
-      <button onclick={aiDraft} disabled={aiBusy || busy}>{aiBusy ? "Schreibt …" : "KI-Entwurf"}</button>
+      <button onclick={aiDraft} disabled={aiBusy || busy} title={aiLocal ? "" : "Läuft über einen Server außerhalb dieses Rechners"}>
+        {aiBusy ? "Schreibt …" : aiLocal ? "KI-Entwurf" : "KI-Entwurf (Cloud)"}
+      </button>
     </div>
+    {#if !aiLocal}
+      <p class="cloud small">Der KI-Entwurf schickt diese Mail und den Verlauf an einen externen Server.</p>
+    {/if}
 
     <footer>
       {#if status?.phase === "waiting"}
@@ -544,6 +555,12 @@
 
   .ai input {
     flex: 1;
+  }
+
+  .cloud {
+    margin: 0;
+    padding: 0 16px 6px;
+    color: var(--danger);
   }
 
   footer {

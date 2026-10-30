@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::ai::AiSettings;
 use crate::ai::client::{self as ai_client, MessagesClient};
 use crate::ai::run::{self as ai_run, RunProgress};
+use crate::ai::{AiSettings, DraftAiSettings};
 use crate::db::Db;
 use crate::db::accounts::{self, Account, NewAccount};
 use crate::db::categories::{self, Category, CategoryInput, Tag};
@@ -245,6 +245,10 @@ pub struct AiSettingsView {
     has_api_key: bool,
     /// Server läuft auf diesem Rechner (sonst verlassen Mail-Inhalte das Gerät)
     is_local: bool,
+    draft: DraftAiSettings,
+    draft_has_api_key: bool,
+    /// Gilt für den Server, der tatsächlich Entwürfe schreibt (eigener oder Hauptprofil)
+    draft_is_local: bool,
 }
 
 fn is_local(url: &str) -> bool {
@@ -253,12 +257,27 @@ fn is_local(url: &str) -> bool {
 
 #[tauri::command]
 pub async fn get_ai_settings(state: State<'_, AppState>) -> Result<AiSettingsView> {
-    let settings = state.db.with(|c| AiSettings::load(c))?;
-    let has_api_key = blocking(secrets::get_ai_key).await?.is_some();
+    let (settings, draft, target) = state.db.with(|c| {
+        Ok((
+            AiSettings::load(c)?,
+            DraftAiSettings::load(c)?,
+            crate::ai::draft_target(c)?,
+        ))
+    })?;
+    let (has_api_key, draft_has_api_key) = blocking(|| {
+        Ok((
+            secrets::get_ai_key()?.is_some(),
+            secrets::get_ai_draft_key()?.is_some(),
+        ))
+    })
+    .await?;
     Ok(AiSettingsView {
         is_local: is_local(&settings.url),
         settings,
         has_api_key,
+        draft,
+        draft_has_api_key,
+        draft_is_local: is_local(&target.url),
     })
 }
 
@@ -276,12 +295,31 @@ pub async fn save_ai_settings(
     get_ai_settings(state).await
 }
 
-/// Verbindungstest: liefert die Modelle des Servers. Ohne `api_key` wird der
-/// gespeicherte Schlüssel verwendet.
+/// Eigenes Profil für Entwürfe; `api_key` wie bei `save_ai_settings`.
 #[tauri::command]
-pub async fn test_ai(url: String, api_key: Option<String>) -> Result<Vec<String>> {
+pub async fn save_draft_ai_settings(
+    state: State<'_, AppState>,
+    settings: DraftAiSettings,
+    api_key: Option<String>,
+) -> Result<AiSettingsView> {
+    state.db.with(|c| settings.save(c))?;
+    if let Some(key) = api_key {
+        blocking(move || secrets::set_ai_draft_key(key.trim())).await?;
+    }
+    get_ai_settings(state).await
+}
+
+/// Verbindungstest: liefert die Modelle des Servers. Ohne `api_key` wird der
+/// gespeicherte Schlüssel verwendet (`for_drafts`: der des Entwurfsprofils).
+#[tauri::command]
+pub async fn test_ai(
+    url: String,
+    api_key: Option<String>,
+    for_drafts: Option<bool>,
+) -> Result<Vec<String>> {
     let key = match api_key.filter(|k| !k.trim().is_empty()) {
         Some(k) => Some(k.trim().to_string()),
+        None if for_drafts.unwrap_or(false) => blocking(secrets::get_ai_draft_key).await?,
         None => blocking(secrets::get_ai_key).await?,
     };
     MessagesClient::new(&url, key)?.models().await
@@ -1007,16 +1045,19 @@ pub fn cancel_send(state: State<'_, AppState>, id: i64) -> Result<bool> {
 /// den Editor; eingefügt wird es dort, gesendet nur über den Dialog.
 #[tauri::command]
 pub async fn ai_draft(state: State<'_, AppState>, id: i64, hint: Option<String>) -> Result<String> {
-    use crate::ai::AiSettings;
     use crate::ai::draft::{self as ai_draft_mod, DraftInput};
 
     let draft = state.db.with(|c| drafts::get(c, id))?;
-    let settings = state.db.with(|c| AiSettings::load(c))?;
-    let model = settings.model.clone().ok_or_else(|| {
-        Error::Invalid("Bitte zuerst unter „Einstellungen“ ein Modell wählen".into())
+    let target = state.db.with(|c| crate::ai::draft_target(c))?;
+    let model = target.model.clone().ok_or_else(|| {
+        Error::Invalid("Bitte zuerst unter „Einstellungen“ ein Modell für Entwürfe wählen".into())
     })?;
-    let key = blocking(secrets::get_ai_key).await?;
-    let client = MessagesClient::new(&settings.url, key)?;
+    let key = if target.separate_key {
+        blocking(secrets::get_ai_draft_key).await?
+    } else {
+        blocking(secrets::get_ai_key).await?
+    };
+    let client = MessagesClient::new(&target.url, key)?;
     let identity = state.db.with(|c| match draft.identity_id {
         Some(i) => identities::get(c, i).map(Some),
         None => identities::default_for(c, draft.account_id),

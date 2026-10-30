@@ -8,8 +8,19 @@
     { id: "ollama", label: "Ollama", url: "http://localhost:11434" },
     { id: "omlx", label: "oMLX", url: "http://127.0.0.1:8000" },
     { id: "splash", label: "Splash", url: "http://127.0.0.1:8000" },
+    { id: "anthropic", label: "Anthropic (Cloud)", url: "https://api.anthropic.com" },
     { id: "custom", label: "Eigener Server", url: "" },
   ];
+
+  /** Grobe Anzeige im Formular; maßgeblich ist die Prüfung im Rust-Kern. */
+  function urlLooksLocal(value: string): boolean {
+    try {
+      const host = new URL(value.trim()).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+      return host === "localhost" || host.endsWith(".localhost") || host.startsWith("127.") || host === "::1";
+    } catch {
+      return true;
+    }
+  }
 
   // --- KI-Server ---
   let saved = $state<AiSettingsView | null>(null);
@@ -30,6 +41,7 @@
     model = s.model ?? "";
     apiKey = "";
     removeKey = false;
+    applyDraft(s);
   }
 
   function changePreset(e: Event) {
@@ -44,15 +56,75 @@
     aiStatus = null;
   }
 
-  /** Grobe Anzeige im Formular; maßgeblich ist die Prüfung im Rust-Kern. */
-  const looksLocal = $derived.by(() => {
-    try {
-      const host = new URL(url.trim()).hostname.replace(/^\[|\]$/g, "").toLowerCase();
-      return host === "localhost" || host.endsWith(".localhost") || host.startsWith("127.") || host === "::1";
-    } catch {
-      return true;
+  const looksLocal = $derived(urlLooksLocal(url));
+
+  // --- KI für Entwürfe (eigenes Profil) ---
+  let dSeparate = $state(false);
+  let dPreset = $state<Preset>("anthropic");
+  let dUrl = $state("https://api.anthropic.com");
+  let dModel = $state("");
+  let dApiKey = $state("");
+  let dRemoveKey = $state(false);
+  let dModels = $state<string[]>([]);
+  let dStatus = $state<{ ok: boolean; text: string } | null>(null);
+  let dTesting = $state(false);
+  let dSaving = $state(false);
+  const dLooksLocal = $derived(!dSeparate ? looksLocal : urlLooksLocal(dUrl));
+
+  function applyDraft(s: AiSettingsView) {
+    dSeparate = s.draft.separate;
+    dPreset = s.draft.preset;
+    dUrl = s.draft.url;
+    dModel = s.draft.model ?? "";
+    dApiKey = "";
+    dRemoveKey = false;
+  }
+
+  function changeDraftPreset(e: Event) {
+    const next = (e.currentTarget as HTMLSelectElement).value as Preset;
+    const previousDefault = presets.find((p) => p.id === dPreset)?.url ?? "";
+    if (dUrl.trim() === "" || dUrl.trim() === previousDefault) {
+      dUrl = presets.find((p) => p.id === next)?.url ?? "";
     }
-  });
+    dPreset = next;
+    dModels = [];
+    dStatus = null;
+  }
+
+  async function testDraftConnection() {
+    dTesting = true;
+    dStatus = null;
+    try {
+      dModels = await api.testAi(dUrl, dRemoveKey ? undefined : dApiKey, true);
+      dStatus = { ok: true, text: `Verbunden, ${dModels.length} Modelle verfügbar.` };
+      if (!dModel && dPreset === "anthropic" && dModels.includes("claude-haiku-5-5")) dModel = "claude-haiku-5-5";
+    } catch (e) {
+      dModels = [];
+      dStatus = { ok: false, text: errorText(e) };
+    } finally {
+      dTesting = false;
+    }
+  }
+
+  async function saveDraftAi(e: SubmitEvent) {
+    e.preventDefault();
+    dSaving = true;
+    dStatus = null;
+    try {
+      const key = dRemoveKey ? "" : dApiKey.trim() || undefined;
+      const view = await api.saveDraftAiSettings(
+        { separate: dSeparate, preset: dPreset, url: dUrl.trim(), model: dModel.trim() || null },
+        key,
+      );
+      applySaved(view);
+      dStatus = { ok: true, text: "Gespeichert." };
+    } catch (err) {
+      dStatus = { ok: false, text: errorText(err) };
+    } finally {
+      dApiKey = "";
+      dSaving = false;
+    }
+  }
 
   async function testConnection() {
     testing = true;
@@ -288,6 +360,74 @@
     {#if aiStatus}<p class="small" class:error={!aiStatus.ok} class:ok={aiStatus.ok}>{aiStatus.text}</p>{/if}
     <p class="muted small">Der API-Schlüssel liegt nur im Schlüsselbund des Systems.</p>
     <div><button class="primary" type="submit" disabled={savingAi}>{savingAi ? "Speichere …" : "Speichern"}</button></div>
+  </form>
+
+  <form class="card" onsubmit={saveDraftAi}>
+    <h2>KI für Entwürfe</h2>
+    <p class="muted small">
+      Antwortentwürfe können über einen anderen Server laufen als die Kategorisierung, zum Beispiel
+      über die Anthropic-API. Die Kategorisierung deiner Mails bleibt davon unberührt.
+    </p>
+    <label class="check">
+      <input type="checkbox" bind:checked={dSeparate} /> Eigenen Server für Entwürfe verwenden
+    </label>
+    {#if dSeparate}
+      <div class="row">
+        <label>
+          Server
+          <select value={dPreset} onchange={changeDraftPreset}>
+            {#each presets as p (p.id)}<option value={p.id}>{p.label}</option>{/each}
+          </select>
+        </label>
+        <label class="grow">
+          URL
+          <input bind:value={dUrl} placeholder="https://api.anthropic.com" required autocomplete="off" />
+        </label>
+      </div>
+      <label>
+        API-Schlüssel
+        <input
+          type="password"
+          bind:value={dApiKey}
+          disabled={dRemoveKey}
+          autocomplete="off"
+          placeholder={saved?.draftHasApiKey ? "gespeichert, leer lassen für unverändert" : "sk-ant-…"}
+        />
+      </label>
+      {#if saved?.draftHasApiKey}
+        <label class="check small">
+          <input type="checkbox" bind:checked={dRemoveKey} /> gespeicherten Schlüssel entfernen
+        </label>
+      {/if}
+      <div class="row end">
+        <label class="grow">
+          Modell
+          <input bind:value={dModel} list="draft-models" placeholder="z. B. claude-haiku-5-5" autocomplete="off" />
+          <datalist id="draft-models">
+            {#each dModels as m (m)}<option value={m}></option>{/each}
+          </datalist>
+        </label>
+        <button type="button" onclick={testDraftConnection} disabled={dTesting || !dUrl.trim()}>
+          {dTesting ? "Teste …" : "Verbindung testen"}
+        </button>
+      </div>
+      {#if dModels.length > 1}
+        <div class="models small">
+          {#each dModels as m (m)}
+            <button type="button" class:chosen={m === dModel} onclick={() => (dModel = m)}>{m}</button>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+    {#if !dLooksLocal}
+      <p class="warning small">
+        Entwürfe laufen über einen Server außerhalb dieses Rechners. Originalmail, bisheriger
+        Verlauf und dein Hinweis werden dorthin gesendet. Die Kategorisierung bleibt lokal.
+      </p>
+    {/if}
+    {#if dStatus}<p class="small" class:error={!dStatus.ok} class:ok={dStatus.ok}>{dStatus.text}</p>{/if}
+    <p class="muted small">Auch dieser Schlüssel liegt nur im Schlüsselbund des Systems.</p>
+    <div><button class="primary" type="submit" disabled={dSaving}>{dSaving ? "Speichere …" : "Speichern"}</button></div>
   </form>
 
   <div class="card">

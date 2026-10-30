@@ -14,6 +14,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Lokale Modelle brauchen für lange Mails und Denkphasen durchaus Minuten.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+pub const ANTHROPIC_URL: &str = "https://api.anthropic.com";
 
 pub struct MessagesClient {
     http: reqwest::Client,
@@ -21,6 +22,9 @@ pub struct MessagesClient {
     api_key: Option<String>,
     /// Manche Server lehnen `thinking` ab; dann ohne weiter.
     send_thinking: AtomicBool,
+    /// Anthropic-Cloud: nur `x-api-key`, kein `thinking: disabled`, keine `temperature`
+    /// (die aktuellen Claude-Modelle lehnen beides ab).
+    anthropic_cloud: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -67,11 +71,15 @@ impl MessagesClient {
             .timeout(REQUEST_TIMEOUT)
             .build()
             .map_err(|e| Error::Ai(format!("HTTP-Client: {e}")))?;
+        let anthropic_cloud = base
+            .host_str()
+            .is_some_and(|h| h.eq_ignore_ascii_case("api.anthropic.com"));
         Ok(Self {
             http,
             base,
             api_key: api_key.filter(|k| !k.is_empty()),
-            send_thinking: AtomicBool::new(true),
+            send_thinking: AtomicBool::new(!anthropic_cloud),
+            anthropic_cloud,
         })
     }
 
@@ -82,6 +90,7 @@ impl MessagesClient {
 
     fn authorized(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.api_key {
+            Some(key) if self.anthropic_cloud => req.header("x-api-key", key),
             // oMLX/Splash prüfen Bearer oder x-api-key; beides schadet nicht.
             Some(key) => req.bearer_auth(key).header("x-api-key", key),
             None => req,
@@ -155,10 +164,12 @@ impl MessagesClient {
         let mut body = json!({
             "model": c.model,
             "max_tokens": c.max_tokens,
-            "temperature": 0,
             "system": c.system,
             "messages": [{ "role": "user", "content": c.user }],
         });
+        if !self.anthropic_cloud {
+            body["temperature"] = json!(0);
+        }
         loop {
             let thinking = self.send_thinking.load(Ordering::Relaxed);
             if thinking {
@@ -328,6 +339,16 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("nicht erreichbar"), "{err}");
+    }
+
+    #[test]
+    fn anthropic_cloud_is_detected() {
+        let c = MessagesClient::new(ANTHROPIC_URL, Some("k".into())).unwrap();
+        assert!(c.anthropic_cloud);
+        assert!(!c.send_thinking.load(Ordering::Relaxed));
+        assert!(!is_local(&parse_base_url(ANTHROPIC_URL).unwrap()));
+        let local = MessagesClient::new("http://127.0.0.1:8000", None).unwrap();
+        assert!(!local.anthropic_cloud);
     }
 
     #[test]

@@ -107,9 +107,17 @@ export interface AppInfo {
   dataDir: string;
 }
 
-export type Preset = "ollama" | "omlx" | "splash" | "custom";
+export type Preset = "ollama" | "omlx" | "splash" | "anthropic" | "custom";
 
 export interface AiSettings {
+  preset: Preset;
+  url: string;
+  model: string | null;
+}
+
+export interface DraftAiSettings {
+  /** eigenes Profil für Entwürfe statt des Hauptprofils */
+  separate: boolean;
   preset: Preset;
   url: string;
   model: string | null;
@@ -119,6 +127,10 @@ export interface AiSettingsView extends AiSettings {
   hasApiKey: boolean;
   /** Server läuft auf diesem Rechner */
   isLocal: boolean;
+  draft: DraftAiSettings;
+  draftHasApiKey: boolean;
+  /** gilt für den Server, der Entwürfe schreibt */
+  draftIsLocal: boolean;
 }
 
 export interface Category {

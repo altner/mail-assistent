@@ -153,6 +153,15 @@ dem Senden durch dieselbe Bereinigung wie beim Anzeigen.
 bisherigen Verlauf der Konversation, den Hinweis und den Namen der Identität und liefert nur den
 Text, der oben in den Editor kommt. Der Mailinhalt gilt wieder als fremdes Material.
 
+Entwürfe können über ein **eigenes KI-Profil** laufen („Einstellungen“ → „KI für Entwürfe“), auch
+über die **Anthropic-API in der Cloud** (Vorlage „Anthropic (Cloud)“, `https://api.anthropic.com`,
+Schlüssel im Schlüsselbund unter `ai-draft-api-key`). Das ist die einzige Stelle, an der Mailinhalte
+den Rechner verlassen können, und nur, wenn du es einschaltest: Die Kategorisierung bleibt immer
+beim Hauptprofil. Ist der Entwurfs-Server nicht lokal, warnen die Einstellungen und der Knopf im
+Editor heißt „KI-Entwurf (Cloud)“. Für die Anthropic-API schickt der Client weder `thinking:
+disabled` noch `temperature` mit (die aktuellen Claude-Modelle lehnen beides ab) und nur `x-api-key`.
+Günstig für Entwürfe ist `claude-haiku-5-5`; der Verbindungstest schlägt es vor.
+
 **Versand**: „Senden …“ öffnet den Dialog mit Konto, Absender, Empfängern, Betreff und Anhängen.
 Erst „Jetzt senden“ ruft `send_draft` auf; es gibt keinen anderen Aufrufer. Mit Wartezeit (Reiter
 „Einstellungen“: aus, 10, 30 oder 60 s) läuft zuerst eine Leiste „Wird in N s gesendet ·
@@ -179,6 +188,7 @@ Zeigt die URL nicht auf diesen Rechner, warnt die App, weil Mail-Inhalte dann da
 | Ollama | `http://localhost:11434` | wird nicht geprüft |
 | oMLX | `http://127.0.0.1:8000` | nötig |
 | Splash | `http://127.0.0.1:8000` | nur mit `--api-key` |
+| Anthropic (Cloud), nur für Entwürfe sinnvoll | `https://api.anthropic.com` | nötig |
 
 **Ablauf** (`src-tauri/src/ai/`): „Vorschläge für 50 Mails holen“ nimmt die neuesten Mails ohne
 Vorschlag. Das Modell bekommt Absender, Betreff, Datum, die ersten 1500 Zeichen Text sowie die
