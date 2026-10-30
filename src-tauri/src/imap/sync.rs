@@ -69,7 +69,10 @@ pub fn should_archive(folder: &RemoteFolder) -> bool {
     if !folder.selectable {
         return false;
     }
-    if matches!(folder.special_use, Some(SpecialUse::Trash | SpecialUse::Junk)) {
+    if matches!(
+        folder.special_use,
+        Some(SpecialUse::Trash | SpecialUse::Junk)
+    ) {
         return false;
     }
     let leaf = match folder.delimiter.as_deref() {
@@ -114,7 +117,13 @@ pub async fn sync_account(
     report(progress.clone());
 
     let result = async {
-        let mut session = connect(&account.imap_host, account.imap_port, &account.username, password).await?;
+        let mut session = connect(
+            &account.imap_host,
+            account.imap_port,
+            &account.username,
+            password,
+        )
+        .await?;
         let outcome = sync_folders(&mut session, db, paths, account, &mut progress, report).await;
         session.logout().await;
         outcome
@@ -143,8 +152,11 @@ async fn sync_folders(
     progress: &mut SyncProgress,
     report: &(dyn Fn(SyncProgress) + Send + Sync),
 ) -> Result<SyncSummary> {
-    let (mut wanted, skipped): (Vec<_>, Vec<_>) =
-        session.list_folders().await?.into_iter().partition(should_archive);
+    let (mut wanted, skipped): (Vec<_>, Vec<_>) = session
+        .list_folders()
+        .await?
+        .into_iter()
+        .partition(should_archive);
     wanted.sort_by_key(order_key);
 
     let mut summary = SyncSummary {
@@ -169,7 +181,9 @@ async fn sync_folders(
             // Verbindungsfehler beenden den Abruf, Ordnerfehler nicht.
             Err(Error::Imap(async_imap::error::Error::No(msg))) => {
                 log::warn!("Ordner {} übersprungen: {msg}", remote.display_name);
-                summary.folder_errors.push(format!("{}: {msg}", remote.display_name));
+                summary
+                    .folder_errors
+                    .push(format!("{}: {msg}", remote.display_name));
             }
             Err(e) => return Err(e),
         }
@@ -223,7 +237,12 @@ async fn sync_folder(
 }
 
 /// Schreibt Dateien und DB-Zeilen außerhalb des async-Runtimes.
-async fn commit_batch(db: &Db, paths: &DataPaths, folder: &Folder, batch: Vec<RawMessage>) -> Result<IngestStats> {
+async fn commit_batch(
+    db: &Db,
+    paths: &DataPaths,
+    folder: &Folder,
+    batch: Vec<RawMessage>,
+) -> Result<IngestStats> {
     let (db, paths, folder) = (db.clone(), paths.clone(), folder.clone());
     tokio::task::spawn_blocking(move || db.with(|c| ingest_batch(c, &paths, &folder, &batch)))
         .await
@@ -261,7 +280,7 @@ mod tests {
 
     #[test]
     fn inbox_first_all_mail_last() {
-        let mut list = vec![
+        let mut list = [
             folder("[Gmail]/All Mail", Some(SpecialUse::All)),
             folder("Zeitung", None),
             folder("Archiv", None),

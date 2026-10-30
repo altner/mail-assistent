@@ -12,7 +12,12 @@ pub fn eml_relative_path(account_id: i64, fingerprint: &str) -> String {
 
 /// Schreibt die Rohmail atomar (temporäre Datei + Umbenennen). Existiert die
 /// Datei schon, bleibt sie unverändert. Liefert den relativen Pfad.
-pub fn store_eml(paths: &DataPaths, account_id: i64, fingerprint: &str, raw: &[u8]) -> Result<String> {
+pub fn store_eml(
+    paths: &DataPaths,
+    account_id: i64,
+    fingerprint: &str,
+    raw: &[u8],
+) -> Result<String> {
     let relative = eml_relative_path(account_id, fingerprint);
     let target = paths.resolve(&relative);
     if target.exists() {
@@ -33,7 +38,10 @@ fn tempfile_in(dir: &Path) -> Result<(std::path::PathBuf, std::fs::File)> {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     let path = dir.join(format!(".tmp-{}-{nanos}", std::process::id()));
-    let file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
     Ok((path, file))
 }
 
@@ -51,7 +59,9 @@ mod tests {
         store_eml(&paths, 7, &fp, b"zweite").unwrap();
         assert_eq!(std::fs::read(paths.resolve(&rel)).unwrap(), b"erste");
         // keine Temp-Dateien übrig
-        let leftovers = std::fs::read_dir(paths.resolve("mail/7/ab")).unwrap().count();
+        let leftovers = std::fs::read_dir(paths.resolve("mail/7/ab"))
+            .unwrap()
+            .count();
         assert_eq!(leftovers, 1);
     }
 }

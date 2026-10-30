@@ -63,7 +63,10 @@ mod tests {
     fn migration_creates_full_schema() {
         let db = Db::open_in_memory().unwrap();
         db.with(|conn| {
-            assert_eq!(migrations::current_version(conn)?, migrations::latest_version());
+            assert_eq!(
+                migrations::current_version(conn)?,
+                migrations::latest_version()
+            );
             let tables = table_names(conn);
             for t in [
                 "accounts",
@@ -92,7 +95,10 @@ mod tests {
         // Zweites Öffnen darf nichts erneut anwenden und nicht scheitern.
         let db = Db::open(&path).unwrap();
         db.with(|conn| {
-            assert_eq!(migrations::current_version(conn)?, migrations::latest_version());
+            assert_eq!(
+                migrations::current_version(conn)?,
+                migrations::latest_version()
+            );
             Ok(())
         })
         .unwrap();
@@ -136,7 +142,10 @@ mod tests {
             let id = seed_message(conn, "Rechnung Oktober");
             assert_eq!(fts_hits(conn, "rechnung"), 1);
 
-            conn.execute("UPDATE messages SET subject = 'Mahnung' WHERE id = ?1", [id])?;
+            conn.execute(
+                "UPDATE messages SET subject = 'Mahnung' WHERE id = ?1",
+                [id],
+            )?;
             assert_eq!(fts_hits(conn, "rechnung"), 0);
             assert_eq!(fts_hits(conn, "mahnung"), 1);
 

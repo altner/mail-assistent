@@ -13,8 +13,10 @@ use commands::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("mail_assistent_lib=info"))
-        .init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("mail_assistent_lib=info"),
+    )
+    .init();
 
     tauri::Builder::default()
         .setup(|app| {

@@ -51,21 +51,29 @@ pub fn parse(raw: &[u8]) -> Result<ParsedMail> {
     let body_text = non_empty(Some(body.join("\n\n").trim()));
 
     Ok(ParsedMail {
-        message_id: msg.message_id().and_then(|id| normalize_message_id(id)),
+        message_id: msg.message_id().and_then(normalize_message_id),
         in_reply_to: msg.in_reply_to().and_then(|l| join_ids(l.iter())),
         references: msg.references().and_then(|l| join_ids(l.iter())),
-        from_addr: from.and_then(|m| non_empty(m.address())).map(|a| a.to_lowercase()),
+        from_addr: from
+            .and_then(|m| non_empty(m.address()))
+            .map(|a| a.to_lowercase()),
         from_name: from.and_then(|m| non_empty(m.name())),
         to,
         subject: non_empty(msg.subject()),
-        date: msg.date().and_then(|d| timestamp_to_rfc3339(d.to_timestamp())),
+        date: msg
+            .date()
+            .and_then(|d| timestamp_to_rfc3339(d.to_timestamp())),
         body_text,
     })
 }
 
 /// Entfernt Leerraum und spitze Klammern; leere IDs zählen als fehlend.
 pub fn normalize_message_id(id: &str) -> Option<String> {
-    let id = id.trim().trim_start_matches('<').trim_end_matches('>').trim();
+    let id = id
+        .trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim();
     (!id.is_empty()).then(|| id.to_string())
 }
 
@@ -79,7 +87,9 @@ fn join_ids<'a>(ids: impl Iterator<Item = &'a str>) -> Option<String> {
 }
 
 fn non_empty(s: Option<&str>) -> Option<String> {
-    s.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+    s.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -102,7 +112,10 @@ Hallo Adrian,\r\nanbei die Rechnung.\r\n";
         let m = parse(PLAIN).unwrap();
         assert_eq!(m.message_id.as_deref(), Some("abc.123@example.org"));
         assert_eq!(m.in_reply_to.as_deref(), Some("parent@example.org"));
-        assert_eq!(m.references.as_deref(), Some("root@example.org parent@example.org"));
+        assert_eq!(
+            m.references.as_deref(),
+            Some("root@example.org parent@example.org")
+        );
         assert_eq!(m.from_addr.as_deref(), Some("juergen@example.org"));
         assert_eq!(m.from_name.as_deref(), Some("Jürgen Müller"));
         assert_eq!(m.subject.as_deref(), Some("Rechnung für Oktober"));

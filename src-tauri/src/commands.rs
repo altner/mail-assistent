@@ -8,9 +8,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::ai::AiConfig;
+use crate::db::Db;
 use crate::db::accounts::{self, Account, NewAccount};
 use crate::db::messages::{self, MessageDetail, MessageSummary};
-use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::imap::sync::{self, SyncProgress, SyncSummary};
 use crate::paths::DataPaths;
@@ -26,15 +26,27 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(db: Db, paths: DataPaths) -> Self {
-        Self { db, paths, running_syncs: Arc::default() }
+        Self {
+            db,
+            paths,
+            running_syncs: Arc::default(),
+        }
     }
 
     fn begin_sync(&self, account_id: i64) -> Result<SyncGuard> {
-        let mut running = self.running_syncs.lock().map_err(|_| Error::Other("Sperre beschädigt".into()))?;
+        let mut running = self
+            .running_syncs
+            .lock()
+            .map_err(|_| Error::Other("Sperre beschädigt".into()))?;
         if !running.insert(account_id) {
-            return Err(Error::Invalid("Für dieses Konto läuft bereits ein Abruf".into()));
+            return Err(Error::Invalid(
+                "Für dieses Konto läuft bereits ein Abruf".into(),
+            ));
         }
-        Ok(SyncGuard { account_id, running: self.running_syncs.clone() })
+        Ok(SyncGuard {
+            account_id,
+            running: self.running_syncs.clone(),
+        })
     }
 }
 
@@ -67,7 +79,10 @@ pub struct AppInfo {
 
 #[tauri::command]
 pub fn app_info(state: State<'_, AppState>) -> AppInfo {
-    AppInfo { data_dir: state.paths.root().display().to_string(), ai: AiConfig::default() }
+    AppInfo {
+        data_dir: state.paths.root().display().to_string(),
+        ai: AiConfig::default(),
+    }
 }
 
 #[tauri::command]
@@ -78,7 +93,11 @@ pub fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>> {
 /// Legt das Konto an; das Passwort geht direkt in den Schlüsselbund. Klappt
 /// das nicht, wird der DB-Eintrag zurückgenommen.
 #[tauri::command]
-pub async fn create_account(state: State<'_, AppState>, account: NewAccount, password: String) -> Result<Account> {
+pub async fn create_account(
+    state: State<'_, AppState>,
+    account: NewAccount,
+    password: String,
+) -> Result<Account> {
     let account = account.validated()?;
     if password.is_empty() {
         return Err(Error::Invalid("Passwort fehlt".into()));
@@ -96,7 +115,11 @@ pub async fn create_account(state: State<'_, AppState>, account: NewAccount, pas
 }
 
 #[tauri::command]
-pub async fn sync_account(app: AppHandle, state: State<'_, AppState>, account_id: i64) -> Result<SyncSummary> {
+pub async fn sync_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: i64,
+) -> Result<SyncSummary> {
     let _guard = state.begin_sync(account_id)?;
     let account = state.db.with(|c| accounts::get(c, account_id))?;
     // Zugriff auf den Schlüsselbund kann blockieren (Freigabe-Dialog unter macOS).

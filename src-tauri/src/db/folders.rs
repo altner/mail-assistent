@@ -38,7 +38,11 @@ pub fn upsert(conn: &Connection, account_id: i64, path: &str) -> Result<Folder> 
 /// UIDs des Ordners sind ungültig. Sie werden auf `-id` gesetzt (eindeutig,
 /// kollidiert nicht mit echten UIDs) und beim Neuabruf per Fingerprint
 /// wieder zugeordnet. Lokale Mails bleiben in jedem Fall erhalten.
-pub fn reset_for_uidvalidity(conn: &Connection, folder_id: i64, uidvalidity: Option<u32>) -> Result<()> {
+pub fn reset_for_uidvalidity(
+    conn: &Connection,
+    folder_id: i64,
+    uidvalidity: Option<u32>,
+) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE messages SET uid = -id WHERE folder_id = ?1 AND uid > 0",

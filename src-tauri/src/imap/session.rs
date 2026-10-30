@@ -61,7 +61,11 @@ impl ReadOnlySession {
 
     pub async fn list_folders(&mut self) -> Result<Vec<RemoteFolder>> {
         let names: Vec<Name> = timed(async {
-            self.inner.list(Some(""), Some("*")).await?.try_collect().await
+            self.inner
+                .list(Some(""), Some("*"))
+                .await?
+                .try_collect()
+                .await
         })
         .await?;
         Ok(names.iter().map(remote_folder).collect())
@@ -70,7 +74,10 @@ impl ReadOnlySession {
     /// Öffnet den Ordner read-only (`EXAMINE`, nie `SELECT`).
     pub async fn examine(&mut self, path: &str) -> Result<ExamineInfo> {
         let mailbox = timed(self.inner.examine(path)).await?;
-        Ok(ExamineInfo { uidvalidity: mailbox.uid_validity, exists: mailbox.exists })
+        Ok(ExamineInfo {
+            uidvalidity: mailbox.uid_validity,
+            exists: mailbox.exists,
+        })
     }
 
     /// Alle UIDs > `last_uid`, aufsteigend sortiert.
@@ -88,7 +95,11 @@ impl ReadOnlySession {
             return Ok(Vec::new());
         }
         let fetches: Vec<Fetch> = timed(async {
-            self.inner.uid_fetch(uid_set(uids), FETCH_QUERY).await?.try_collect().await
+            self.inner
+                .uid_fetch(uid_set(uids), FETCH_QUERY)
+                .await?
+                .try_collect()
+                .await
         })
         .await?;
         Ok(fetches.iter().filter_map(raw_message).collect())
@@ -145,9 +156,10 @@ fn raw_message(fetch: &Fetch) -> Option<RawMessage> {
     Some(RawMessage {
         uid,
         seen: fetch.flags().any(|f| matches!(f, Flag::Seen)),
-        internal_date: fetch
-            .internal_date()
-            .map(|d| d.with_timezone(&Utc).to_rfc3339_opts(SecondsFormat::Secs, true)),
+        internal_date: fetch.internal_date().map(|d| {
+            d.with_timezone(&Utc)
+                .to_rfc3339_opts(SecondsFormat::Secs, true)
+        }),
         raw: body.to_vec(),
     })
 }
@@ -162,7 +174,11 @@ pub(crate) fn uid_set(uids: &[u32]) -> String {
         while iter.peek() == Some(&(end + 1)) {
             end = iter.next().unwrap_or(end);
         }
-        parts.push(if start == end { start.to_string() } else { format!("{start}:{end}") });
+        parts.push(if start == end {
+            start.to_string()
+        } else {
+            format!("{start}:{end}")
+        });
     }
     parts.join(",")
 }
@@ -176,15 +192,36 @@ mod tests {
         assert!(FETCH_QUERY.contains("BODY.PEEK[]"));
         // "BODY[" ohne PEEK oder RFC822 (ohne .HEADER/.SIZE) würden \Seen setzen.
         assert!(!FETCH_QUERY.contains("BODY["));
-        assert!(!FETCH_QUERY.split_whitespace().any(|t| t.trim_matches(['(', ')']) == "RFC822"));
+        assert!(
+            !FETCH_QUERY
+                .split_whitespace()
+                .any(|t| t.trim_matches(['(', ')']) == "RFC822")
+        );
     }
 
     #[test]
     fn module_uses_examine_not_select() {
         // Schutz vor Regressionen: kein Aufruf schreibender Befehle in diesem Modul.
         let src = include_str!("session.rs");
-        let code: String = src.lines().filter(|l| !l.trim_start().starts_with("//")).collect();
-        for forbidden in [".select(", ".store(", ".uid_store(", ".expunge(", ".uid_expunge(", ".append(", ".mv(", ".uid_mv(", ".copy(", ".uid_copy(", ".delete(", ".rename(", ".create("] {
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect();
+        for forbidden in [
+            ".select(",
+            ".store(",
+            ".uid_store(",
+            ".expunge(",
+            ".uid_expunge(",
+            ".append(",
+            ".mv(",
+            ".uid_mv(",
+            ".copy(",
+            ".uid_copy(",
+            ".delete(",
+            ".rename(",
+            ".create(",
+        ] {
             let hits = code.matches(forbidden).count();
             // Der Test selbst enthält die Muster genau einmal in der Liste oben.
             assert_eq!(hits, 1, "verbotener Aufruf {forbidden} gefunden");

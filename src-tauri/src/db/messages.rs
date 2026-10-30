@@ -34,12 +34,22 @@ pub struct Existing {
     pub uid: i64,
 }
 
-pub fn find_by_fingerprint(conn: &Connection, account_id: i64, fingerprint: &str) -> Result<Option<Existing>> {
+pub fn find_by_fingerprint(
+    conn: &Connection,
+    account_id: i64,
+    fingerprint: &str,
+) -> Result<Option<Existing>> {
     Ok(conn
         .query_row(
             "SELECT id, folder_id, uid FROM messages WHERE account_id = ?1 AND fingerprint = ?2",
             params![account_id, fingerprint],
-            |r| Ok(Existing { id: r.get(0)?, folder_id: r.get(1)?, uid: r.get(2)? }),
+            |r| {
+                Ok(Existing {
+                    id: r.get(0)?,
+                    folder_id: r.get(1)?,
+                    uid: r.get(2)?,
+                })
+            },
         )
         .optional()?)
 }
@@ -98,7 +108,12 @@ pub struct MessageSummary {
     pub is_read: bool,
 }
 
-pub fn list(conn: &Connection, account_id: Option<i64>, limit: u32, offset: u32) -> Result<Vec<MessageSummary>> {
+pub fn list(
+    conn: &Connection,
+    account_id: Option<i64>,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<MessageSummary>> {
     let mut stmt = conn.prepare(
         "SELECT m.id, m.account_id, f.path, m.from_name, m.from_addr, m.subject, m.date, m.is_read
          FROM messages m JOIN imap_folders f ON f.id = m.folder_id
@@ -155,7 +170,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<MessageDetail> {
                     id: r.get(0)?,
                     account_id: r.get(1)?,
                     folder_name: mutf7::decode(&r.get::<_, String>(2)?),
-            folder_path: r.get(2)?,
+                    folder_path: r.get(2)?,
                     from_name: r.get(3)?,
                     from_addr: r.get(4)?,
                     subject: r.get(5)?,

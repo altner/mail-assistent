@@ -25,13 +25,22 @@ fn tls_connector() -> Result<TlsConnector> {
 }
 
 /// Verbindet per implizitem TLS (in der Regel Port 993) und meldet sich an.
-pub async fn connect(host: &str, port: u16, username: &str, password: &str) -> Result<ReadOnlySession> {
+pub async fn connect(
+    host: &str,
+    port: u16,
+    username: &str,
+    password: &str,
+) -> Result<ReadOnlySession> {
     let server_name = ServerName::try_from(host.to_string())
         .map_err(|_| Error::Invalid(format!("ungültiger Servername: {host}")))?;
 
     let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| Error::Other(format!("Zeitüberschreitung beim Verbinden mit {host}:{port}")))??;
+        .map_err(|_| {
+            Error::Other(format!(
+                "Zeitüberschreitung beim Verbinden mit {host}:{port}"
+            ))
+        })??;
     let tls = tokio::time::timeout(CONNECT_TIMEOUT, tls_connector()?.connect(server_name, tcp))
         .await
         .map_err(|_| Error::Tls("Zeitüberschreitung beim TLS-Handshake".into()))?

@@ -22,7 +22,10 @@ pub struct AiConfig {
 
 impl Default for AiConfig {
     fn default() -> Self {
-        Self { ollama_url: DEFAULT_OLLAMA_URL.into(), model: None }
+        Self {
+            ollama_url: DEFAULT_OLLAMA_URL.into(),
+            model: None,
+        }
     }
 }
 
@@ -51,7 +54,10 @@ pub trait Classifier: Send + Sync {
     /// Modellname, wird in `classifications.model` gespeichert.
     fn model(&self) -> &str;
 
-    fn classify(&self, input: &ClassificationInput<'_>) -> impl Future<Output = Result<Suggestion>> + Send;
+    fn classify(
+        &self,
+        input: &ClassificationInput<'_>,
+    ) -> impl Future<Output = Result<Suggestion>> + Send;
 }
 
 /// Platzhalter bis Phase 3: macht keine Vorschläge.

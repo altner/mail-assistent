@@ -58,7 +58,11 @@ pub fn ingest_batch(
                 (p, fp)
             }
             Err(e) => {
-                log::warn!("UID {} in {}: {e}; Rohdaten werden trotzdem archiviert", msg.uid, folder.path);
+                log::warn!(
+                    "UID {} in {}: {e}; Rohdaten werden trotzdem archiviert",
+                    msg.uid,
+                    folder.path
+                );
                 stats.unparsable += 1;
                 (ParsedMail::default(), fingerprint_raw(&msg.raw))
             }
@@ -121,7 +125,12 @@ mod tests {
     }
 
     fn msg(uid: u32, id: &str) -> RawMessage {
-        RawMessage { uid, seen: uid % 2 == 0, internal_date: None, raw: raw(id, &format!("Mail {uid}")) }
+        RawMessage {
+            uid,
+            seen: uid.is_multiple_of(2),
+            internal_date: None,
+            raw: raw(id, &format!("Mail {uid}")),
+        }
     }
 
     fn setup() -> (Db, DataPaths, tempfile::TempDir, Folder, Folder) {
@@ -140,7 +149,9 @@ mod tests {
     #[test]
     fn inserts_stores_eml_and_advances_last_uid() {
         let (db, paths, _dir, inbox, _) = setup();
-        let stats = db.with(|c| ingest_batch(c, &paths, &inbox, &[msg(3, "a@x"), msg(4, "b@x")])).unwrap();
+        let stats = db
+            .with(|c| ingest_batch(c, &paths, &inbox, &[msg(3, "a@x"), msg(4, "b@x")]))
+            .unwrap();
         assert_eq!(stats.inserted, 2);
 
         db.with(|c| {
@@ -159,19 +170,35 @@ mod tests {
     #[test]
     fn duplicate_in_other_folder_is_skipped() {
         let (db, paths, _dir, inbox, archive) = setup();
-        db.with(|c| ingest_batch(c, &paths, &inbox, &[msg(1, "same@x")])).unwrap();
-        let stats = db.with(|c| ingest_batch(c, &paths, &archive, &[msg(9, "same@x")])).unwrap();
-        assert_eq!(stats, IngestStats { duplicates: 1, ..Default::default() });
+        db.with(|c| ingest_batch(c, &paths, &inbox, &[msg(1, "same@x")]))
+            .unwrap();
+        let stats = db
+            .with(|c| ingest_batch(c, &paths, &archive, &[msg(9, "same@x")]))
+            .unwrap();
+        assert_eq!(
+            stats,
+            IngestStats {
+                duplicates: 1,
+                ..Default::default()
+            }
+        );
         assert_eq!(db.with(|c| messages::count(c, None)).unwrap(), 1);
         // last_uid des zweiten Ordners rückt trotzdem vor
-        assert_eq!(db.with(|c| folders::upsert(c, 1, "Archiv")).unwrap().last_uid, 9);
+        assert_eq!(
+            db.with(|c| folders::upsert(c, 1, "Archiv"))
+                .unwrap()
+                .last_uid,
+            9
+        );
     }
 
     #[test]
     fn uidvalidity_reset_remaps_known_mails() {
         let (db, paths, _dir, inbox, _) = setup();
-        db.with(|c| ingest_batch(c, &paths, &inbox, &[msg(1, "a@x"), msg(2, "b@x")])).unwrap();
-        db.with(|c| folders::reset_for_uidvalidity(c, inbox.id, Some(77))).unwrap();
+        db.with(|c| ingest_batch(c, &paths, &inbox, &[msg(1, "a@x"), msg(2, "b@x")]))
+            .unwrap();
+        db.with(|c| folders::reset_for_uidvalidity(c, inbox.id, Some(77)))
+            .unwrap();
 
         // Server hat neu nummeriert: UID 2 ist jetzt die Mail, die vorher UID 1 hatte.
         let stats = db
@@ -197,8 +224,15 @@ mod tests {
     #[test]
     fn unparsable_mail_is_still_archived() {
         let (db, paths, _dir, inbox, _) = setup();
-        let bad = RawMessage { uid: 1, seen: false, internal_date: None, raw: Vec::new() };
-        let stats = db.with(|c| ingest_batch(c, &paths, &inbox, &[bad])).unwrap();
+        let bad = RawMessage {
+            uid: 1,
+            seen: false,
+            internal_date: None,
+            raw: Vec::new(),
+        };
+        let stats = db
+            .with(|c| ingest_batch(c, &paths, &inbox, &[bad]))
+            .unwrap();
         assert_eq!(stats.unparsable, 1);
         assert_eq!(stats.inserted, 1);
     }

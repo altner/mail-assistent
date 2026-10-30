@@ -31,15 +31,24 @@ impl NewAccount {
         let imap_host = self.imap_host.trim().to_ascii_lowercase();
         let username = self.username.trim().to_string();
         if name.is_empty() || imap_host.is_empty() || username.is_empty() {
-            return Err(Error::Invalid("Name, Server und Benutzername sind Pflicht".into()));
+            return Err(Error::Invalid(
+                "Name, Server und Benutzername sind Pflicht".into(),
+            ));
         }
         if imap_host.contains(|c: char| c.is_whitespace() || c == '/' || c == ':') {
-            return Err(Error::Invalid("Server bitte ohne Protokoll/Port angeben".into()));
+            return Err(Error::Invalid(
+                "Server bitte ohne Protokoll/Port angeben".into(),
+            ));
         }
         if self.imap_port == 0 {
             return Err(Error::Invalid("Port fehlt".into()));
         }
-        Ok(Self { name, imap_host, imap_port: self.imap_port, username })
+        Ok(Self {
+            name,
+            imap_host,
+            imap_port: self.imap_port,
+            username,
+        })
     }
 }
 
@@ -62,7 +71,12 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
 pub fn insert(conn: &Connection, account: &NewAccount) -> Result<i64> {
     conn.execute(
         "INSERT INTO accounts (name, imap_host, imap_port, username) VALUES (?1, ?2, ?3, ?4)",
-        params![account.name, account.imap_host, account.imap_port, account.username],
+        params![
+            account.name,
+            account.imap_host,
+            account.imap_port,
+            account.username
+        ],
     )?;
     Ok(conn.last_insert_rowid())
 }

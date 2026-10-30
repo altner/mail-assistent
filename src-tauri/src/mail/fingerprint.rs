@@ -12,7 +12,12 @@ use super::parse::ParsedMail;
 pub const BODY_PREFIX_CHARS: usize = 500;
 
 pub fn fingerprint(mail: &ParsedMail) -> String {
-    let from = mail.from_addr.as_deref().unwrap_or("").trim().to_lowercase();
+    let from = mail
+        .from_addr
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
     let input = match mail.message_id.as_deref() {
         Some(id) => format!("mid\n{id}\n{from}"),
         None => format!(
@@ -46,10 +51,12 @@ fn body_prefix(body: &str) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 #[cfg(test)]
@@ -71,7 +78,10 @@ mod tests {
     fn is_sha256_hex() {
         let fp = fingerprint(&mail(Some("a@b"), "x@y"));
         assert_eq!(fp.len(), 64);
-        assert!(fp.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            fp.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]
@@ -95,8 +105,14 @@ mod tests {
 
     #[test]
     fn sender_is_case_insensitive_and_part_of_identity() {
-        assert_eq!(fingerprint(&mail(Some("id"), "X@Y")), fingerprint(&mail(Some("id"), "x@y")));
-        assert_ne!(fingerprint(&mail(Some("id"), "x@y")), fingerprint(&mail(Some("id"), "z@y")));
+        assert_eq!(
+            fingerprint(&mail(Some("id"), "X@Y")),
+            fingerprint(&mail(Some("id"), "x@y"))
+        );
+        assert_ne!(
+            fingerprint(&mail(Some("id"), "x@y")),
+            fingerprint(&mail(Some("id"), "z@y"))
+        );
     }
 
     #[test]
@@ -104,7 +120,11 @@ mod tests {
         let a = mail(None, "x@y");
         let mut crlf = a.clone();
         crlf.body_text = Some("Hallo\nWelt  ".into());
-        assert_eq!(fingerprint(&a), fingerprint(&crlf), "Leerraum darf nicht zählen");
+        assert_eq!(
+            fingerprint(&a),
+            fingerprint(&crlf),
+            "Leerraum darf nicht zählen"
+        );
 
         for change in [
             |m: &mut ParsedMail| m.subject = Some("Anders".into()),

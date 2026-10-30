@@ -7,16 +7,16 @@ pub fn decode(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'&' {
-            if let Some(len) = bytes[i + 1..].iter().position(|&c| c == b'-') {
-                let chunk = &name[i + 1..i + 1 + len];
-                match decode_chunk(chunk) {
-                    Some(text) => out.push_str(&text),
-                    None => out.push_str(&name[i..i + len + 2]),
-                }
-                i += len + 2;
-                continue;
+        if bytes[i] == b'&'
+            && let Some(len) = bytes[i + 1..].iter().position(|&c| c == b'-')
+        {
+            let chunk = &name[i + 1..i + 1 + len];
+            match decode_chunk(chunk) {
+                Some(text) => out.push_str(&text),
+                None => out.push_str(&name[i..i + len + 2]),
             }
+            i += len + 2;
+            continue;
         }
         let ch = name[i..].chars().next().expect("gültiger UTF-8-Index");
         out.push(ch);
@@ -49,7 +49,12 @@ fn decode_chunk(chunk: &str) -> Option<String> {
             bits &= (1 << nbits) - 1;
         }
     }
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|p| u16::from_be_bytes([p[0], p[1]])).collect();
+    let units: Vec<u16> = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|p| u16::from_be_bytes([p[0], p[1]]))
+        .collect();
     String::from_utf16(&units).ok()
 }
 
