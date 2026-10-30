@@ -88,7 +88,10 @@ impl MessagesClient {
         Url::parse(&format!("{base}{path}")).map_err(|e| Error::Invalid(e.to_string()))
     }
 
+    /// Schlüssel und `anthropic-version` auf jede Anfrage; Anthropic verlangt
+    /// den Versions-Header auch bei `/v1/models`, lokale Server ignorieren ihn.
     fn authorized(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let req = req.header("anthropic-version", ANTHROPIC_VERSION);
         match &self.api_key {
             Some(key) if self.anthropic_cloud => req.header("x-api-key", key),
             // oMLX/Splash prüfen Bearer oder x-api-key; beides schadet nicht.
@@ -140,8 +143,13 @@ impl MessagesClient {
         }
 
         let path = "/v1/models";
+        let mut url = self.endpoint(path)?;
+        if self.anthropic_cloud {
+            // Anthropic liefert sonst nur die ersten 20 Modelle.
+            url.set_query(Some("limit=1000"));
+        }
         let resp = self
-            .authorized(self.http.get(self.endpoint(path)?))
+            .authorized(self.http.get(url))
             .send()
             .await
             .map_err(|e| self.send_error(e))?;
@@ -179,7 +187,6 @@ impl MessagesClient {
             }
             let resp = self
                 .authorized(self.http.post(self.endpoint(path)?))
-                .header("anthropic-version", ANTHROPIC_VERSION)
                 .json(&body)
                 .send()
                 .await
@@ -294,6 +301,7 @@ mod tests {
 
         let req = seen.lock().unwrap()[0].clone();
         assert!(req.starts_with("POST /v1/messages "));
+        assert!(req.contains("anthropic-version: 2023-06-01"));
         assert!(req.to_lowercase().contains("x-api-key: geheim"));
         assert!(req.contains(r#""thinking":{"type":"disabled"}"#));
         assert!(req.contains(r#""system":"sys""#));
@@ -315,13 +323,14 @@ mod tests {
 
     #[tokio::test]
     async fn lists_models_and_reports_auth_errors() {
-        let (url, _) = serve(vec![
+        let (url, seen) = serve(vec![
             (200, r#"{"data":[{"id":"qwen-b"},{"id":"qwen-a"}]}"#),
             (401, r#"{"error":"no key"}"#),
         ])
         .await;
         let client = MessagesClient::new(&url, None).unwrap();
         assert_eq!(client.models().await.unwrap(), ["qwen-a", "qwen-b"]);
+        assert!(seen.lock().unwrap()[0].contains("anthropic-version: 2023-06-01"));
         let err = client.models().await.unwrap_err().to_string();
         assert!(err.contains("API-Schlüssel"), "{err}");
     }
