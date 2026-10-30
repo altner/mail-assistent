@@ -4,9 +4,9 @@ Lokales Archiv für private IMAP-Postfächer mit (später) KI-Kategorisierung.
 Desktop-App mit Tauri v2 (Rust) und Svelte 5 + TypeScript. Die Server-Postfächer
 bleiben unangetastet und dienen nur als Backup.
 
-Stand: **Phase 3**. Konten anlegen, Mails nur lesend abrufen und lokal archivieren,
-Mail-Liste als einzelne Mails oder Konversationen, KI-Vorschläge für Kategorien und Tags
-mit Review.
+Stand: **Phase 4**. Konten anlegen, Mails nur lesend abrufen und lokal archivieren,
+Mail-Liste als einzelne Mails oder Konversationen, Volltextsuche, HTML-Anzeige im
+abgeschotteten iframe mit Anhängen, KI-Vorschläge für Kategorien und Tags mit Review.
 
 ## Harte Regeln
 
@@ -18,8 +18,8 @@ mit Review.
 3. **Kategorien und Tags gibt es nur lokal**, mit einem gemeinsamen Schema für alle Postfächer.
 4. **Die KI schlägt nur vor.** Jeder Vorschlag bleibt `pending`, bis er im UI bestätigt oder geändert wird.
 5. **Nichts wird gesendet.** SMTP und Antwortentwürfe kommen erst in einer späteren Phase.
-6. **HTML-Mails** werden später nur in einem abgeschotteten iframe angezeigt: ohne JavaScript,
-   externe Bilder standardmäßig blockiert. Bis dahin gibt es nur Klartext.
+6. **HTML-Mails** werden nur in einem abgeschotteten iframe angezeigt: ohne JavaScript,
+   externe Bilder standardmäßig blockiert. Siehe „HTML-Anzeige“.
 7. **Alle Daten liegen im App-Datenverzeichnis des Betriebssystems** (Tauri-Pfad-API),
    macOS: `~/Library/Application Support/de.adrianaltner.mailassistent/`
    - `archive.sqlite3`: Datenbank (SQLite mit FTS5)
@@ -86,6 +86,40 @@ tausend Mails Sekundenbruchteile und ordnet auch ältere Mails nachträglich ric
 
 Konversationen gelten pro Konto, wie die Duplikaterkennung.
 
+## HTML-Anzeige
+
+Drei Schichten, jede für sich schon ausreichend (`src-tauri/src/mail/html.rs`, `src/components/MailBody.svelte`):
+
+1. **Bereinigung im Rust-Kern** mit `lol_html`: `script`, `iframe`, `object`, `embed`, `form`
+   und Eingabefelder, `<base>` und `<meta http-equiv>` fliegen samt Inhalt raus, ebenso alle
+   `on*`-Attribute und `javascript:`-Links. `url(...)` in Styles bleibt nur für `data:`.
+2. **`<iframe sandbox="allow-same-origin">`** ohne `allow-scripts`: kein JavaScript, keine
+   Formulare, keine Navigation, keine Popups. `allow-same-origin` braucht die App, um Klicks
+   abzufangen und die Höhe zu messen; ohne Skripte im Dokument ist das ungefährlich.
+3. **Eigene CSP im Mail-Dokument:** `default-src 'none'`, Bilder nur `data:` (mit Freigabe
+   zusätzlich `https:`), dazu `referrer: no-referrer`.
+
+**Bilder:** Eingebettete Bilder (`cid:`) werden aus der Mail selbst als `data:`-URL eingesetzt.
+Externe Bilder (auch in Styles) werden entfernt und gezählt; „Bilder laden“ gibt sie nur für diese
+Anzeige frei (nur `https:`), gespeichert wird die Freigabe nicht. So laden Tracking-Pixel nie
+unbemerkt. Die Fenster-CSP enthält dafür `img-src https:` und `frame-src about:`.
+
+**Links:** Ein Klick öffnet `http(s)`-Links im Standardbrowser (Plugin `opener`, nur diese
+Schemata, aus Rust heraus). Beim Überfahren steht das echte Ziel unter der Mail, damit
+Phishing-Links auffallen. `mailto:` wird nur angezeigt, nichts wird gesendet. In der Textansicht
+(Umschalter HTML/Text, Mails ohne HTML) werden URLs ebenfalls klickbar.
+
+**Anhänge** werden bei Bedarf aus der `.eml` gelesen und unter der Mail aufgelistet; „Speichern“
+öffnet den System-Dialog (Plugin `dialog`), Dateinamen werden bereinigt. Die Tabelle
+`attachments` aus dem Schema bleibt dafür ungenutzt, bis Anhänge einmal durchsuchbar sein sollen.
+
+## Volltextsuche
+
+Das Suchfeld in der Mail-Liste sucht per FTS5 in Betreff, Absender und Text. Jedes Wort wird
+als Präfix gesucht, alle Wörter müssen vorkommen („rechn märz“ findet „Rechnung März“).
+FTS-Sonderzeichen in der Eingabe sind unschädlich. Die Suche gilt für einzelne Mails; sie
+schaltet die Liste automatisch um.
+
 ## KI-Vorschläge
 
 Die KI läuft auf einem lokalen Server mit **Anthropic-Messages-Schnittstelle** (`POST /v1/messages`,
@@ -127,14 +161,15 @@ Vorschläge mit passender deutscher Begründung. Die MTP-Variante lädt in oMLX 
 ```
 src/                         Svelte 5 + TS
   lib/          api.ts (invoke-Wrapper), types.ts, state.svelte.ts, format.ts
-  components/   AccountManager, ListPane (Konto-Filter, Ansicht), MailList, ThreadList,
-                MailDetail, ThreadView, ReviewView, SettingsView
+  components/   AccountManager, ListPane (Konto-Filter, Ansicht, Suche), MailList, ThreadList,
+                MailDetail, ThreadView, MailBody (iframe, Links, Anhänge), ReviewView, SettingsView
 src-tauri/src/
   lib.rs        Setup, AppState, Command-Registrierung
   commands.rs   Tauri-Commands (Konten, Mails, Threads, KI-Einstellungen, Kategorien, Review)
   db/           Verbindung, Migrationen (migrations/*.sql), Queries
   imap/         connect (TLS), session (nur lesen), sync, mutf7 (Ordnernamen)
-  mail/         parse, fingerprint, store (.eml), ingest (Übernahme ins Archiv), thread (JWZ)
+  mail/         parse, fingerprint, store (.eml), ingest (Übernahme ins Archiv), thread (JWZ),
+                html (Bereinigung), body (Anzeige-Inhalt und Anhänge aus der .eml)
   secrets/      Schlüsselbund-Wrapper (IMAP-Passwörter, API-Schlüssel des KI-Servers)
   tls.rs        gemeinsame rustls-Konfiguration für IMAP und HTTP
   ai/           client (/v1/messages, /v1/models), prompt (Prompt + Auswertung), run (Vorschlagslauf)
@@ -157,7 +192,7 @@ Zusätzlich zum vorgegebenen Schema gibt es:
 - ~~**2** Threading (JWZ über In-Reply-To/References, Fallback über normalisierten Betreff), Thread-Ansicht~~ erledigt
 - ~~**3** KI-Anbindung, strukturierte Vorschläge mit Begründung, Review-UI mit Tastenkürzeln~~ erledigt
   (statt nur Ollama: jeder Server mit `/v1/messages`, also auch oMLX und Splash)
-- **4** Volltextsuche im UI, HTML im abgeschotteten iframe, Anhänge
+- ~~**4** Volltextsuche im UI, HTML im abgeschotteten iframe, Anhänge~~ erledigt
 - **5** Antwortentwürfe und SMTP (nur mit manueller Freigabe)
 - **6** mehrere Postfächer parallel, Windows/Linux, Signierung
 
