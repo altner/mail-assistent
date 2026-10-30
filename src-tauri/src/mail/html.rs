@@ -45,8 +45,30 @@ pub struct Sanitized {
     pub blocked_images: usize,
 }
 
-/// CSP im Mail-Dokument: kein Skript, keine Verbindungen, Bilder nur
-/// eingebettet, mit Freigabe zusätzlich per https.
+/// Das einzige Skript, das im Mail-Dokument laufen darf. Es gehört zur App,
+/// nicht zur Mail: Der iframe hat eine fremde Herkunft (`sandbox` ohne
+/// `allow-same-origin`), daher kann das Dokument das Fenster nur per
+/// `postMessage` erreichen. Das Skript meldet Klicks auf Links, den Link unter
+/// dem Zeiger und die Dokumenthöhe; das Frontend prüft Absender und Inhalt.
+/// Die CSP erlaubt es über seinen SHA-256-Hash, alles andere bleibt gesperrt.
+pub const BRIDGE_JS: &str = r#"(function(){var p=window.parent;if(!p||p===window)return;function send(m){p.postMessage(m,"*")}function link(t){var a=t&&t.closest?t.closest("a[href]"):null;return a?a.getAttribute("href"):null}document.addEventListener("click",function(e){var h=link(e.target);if(h===null)return;e.preventDefault();send({type:"link",href:h})},true);document.addEventListener("auxclick",function(e){if(link(e.target)!==null)e.preventDefault()},true);document.addEventListener("mouseover",function(e){send({type:"hover",href:link(e.target)})});var last=-1;function h(){var v=document.documentElement.offsetHeight;if(v!==last){last=v;send({type:"height",value:v})}}window.addEventListener("load",h);if("ResizeObserver"in window){new ResizeObserver(h).observe(document.body)}Array.prototype.forEach.call(document.images,function(i){i.addEventListener("load",h)});h()})();"#;
+
+/// `'sha256-…'` von [`BRIDGE_JS`], wie die CSP es erwartet.
+pub fn bridge_hash() -> &'static str {
+    use sha2::{Digest, Sha256};
+    use std::sync::OnceLock;
+    static HASH: OnceLock<String> = OnceLock::new();
+    HASH.get_or_init(|| {
+        let digest = Sha256::digest(BRIDGE_JS.as_bytes());
+        format!(
+            "'sha256-{}'",
+            base64::engine::general_purpose::STANDARD.encode(digest)
+        )
+    })
+}
+
+/// CSP im Mail-Dokument: nur das Brücken-Skript, keine Verbindungen, Bilder
+/// nur eingebettet, mit Freigabe zusätzlich per https.
 fn csp(allow_remote: bool) -> String {
     let img = if allow_remote {
         "data: https:"
@@ -54,9 +76,14 @@ fn csp(allow_remote: bool) -> String {
         "data:"
     };
     format!(
-        "default-src 'none'; img-src {img}; style-src 'unsafe-inline'; font-src data:; \
-         form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+        "default-src 'none'; script-src {}; img-src {img}; style-src 'unsafe-inline'; \
+         font-src data:; form-action 'none'; base-uri 'none'",
+        bridge_hash()
     )
+}
+
+fn bridge_tag() -> String {
+    format!("<script>{BRIDGE_JS}</script>")
 }
 
 fn is_remote(url: &str) -> bool {
@@ -227,8 +254,9 @@ pub fn sanitize(html: &str, inline: &InlineImages<'_>, allow_remote: bool) -> Re
              'Segoe UI',system-ui,sans-serif;color:#1f2328;background:#fff}}\
              img{{max-width:100%;height:auto}}img[data-blocked]{{display:inline-block;min-width:16px;\
              min-height:16px;border:1px dashed #bbb;background:#f3f3f3;color:#777;font-size:11px}}\
-             pre{{white-space:pre-wrap}}</style></head><body>{body}</body></html>",
-            csp(allow_remote)
+             pre{{white-space:pre-wrap}}</style></head><body>{body}{}</body></html>",
+            csp(allow_remote),
+            bridge_tag()
         ),
         blocked_images: blocked.get(),
     })
@@ -279,8 +307,9 @@ pub fn text_as_html(text: &str) -> Sanitized {
              <meta name=\"referrer\" content=\"no-referrer\">\
              <style>html,body{{margin:0;padding:12px;background:#fff;color:#1f2328}}\
              pre{{margin:0;font:14px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;\
-             white-space:pre-wrap;overflow-wrap:anywhere}}</style></head><body>{body}</body></html>",
-            csp(false)
+             white-space:pre-wrap;overflow-wrap:anywhere}}</style></head><body>{body}{}</body></html>",
+            csp(false),
+            bridge_tag()
         ),
         blocked_images: 0,
     }
@@ -342,7 +371,15 @@ mod tests {
                <iframe src="https://evil"></iframe><form action="https://x"><input></form>
                <meta http-equiv="refresh" content="0;url=https://x"><base href="https://x/">"#,
         );
-        assert!(!s.html.contains("<script"));
+        assert!(!s.html.contains("alert(1)"));
+        assert_eq!(
+            s.html.matches("<script").count(),
+            1,
+            "nur das Brücken-Skript"
+        );
+        assert!(s.html.contains(&format!("<script>{BRIDGE_JS}</script>")));
+        assert!(s.html.contains(&format!("script-src {};", bridge_hash())));
+        assert!(bridge_hash().starts_with("'sha256-") && bridge_hash().ends_with("='"));
         assert!(!s.html.contains("onclick"));
         assert!(!s.html.contains("javascript:"));
         assert!(!s.html.contains("<iframe"));

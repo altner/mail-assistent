@@ -5,10 +5,13 @@
 
   // Anzeige einer Mail im abgeschotteten iframe (Regel 6):
   // 1. Bereinigung im Rust-Kern (kein Skript, keine Formulare, keine Handler),
-  // 2. sandbox ohne allow-scripts: kein JavaScript, keine Navigation, keine Popups,
-  // 3. eigene CSP im Dokument: keine Verbindungen, Bilder nur data: (mit Freigabe https:).
-  // allow-same-origin ist nötig, um Klicks abzufangen und die Höhe zu messen;
-  // ohne allow-scripts kann das Dokument damit nichts anfangen.
+  // 2. sandbox="allow-scripts" ohne allow-same-origin: das Dokument hat eine
+  //    fremde Herkunft und erreicht dieses Fenster nur per postMessage; keine
+  //    Formulare, keine Navigation des Fensters, keine Popups,
+  // 3. eigene CSP im Dokument: nur das Brücken-Skript der App (per Hash),
+  //    keine Verbindungen, Bilder nur data: (mit Freigabe https:).
+  // Das Brücken-Skript (Rust, mail/html.rs) meldet Klicks, Hover und Höhe.
+  // Nachrichten werden nur vom eigenen iframe angenommen und geprüft.
 
   let { id, textFallback }: { id: number; textFallback: string | null } = $props();
 
@@ -42,6 +45,7 @@
     hovered = null;
     saveNote = null;
     mode = "html";
+    height = 200;
   });
 
   // Link-Anzeige gehört zum iframe; in der Textansicht gibt es sie nicht.
@@ -49,36 +53,34 @@
     if (mode === "text") hovered = null;
   });
 
-  function linkTarget(e: Event): string | null {
-    const a = (e.target as HTMLElement | null)?.closest("a[href]");
-    return a ? a.getAttribute("href") : null;
+  function onMessage(e: MessageEvent) {
+    // Nur Nachrichten aus dem eigenen iframe; dessen Herkunft ist "null".
+    if (!frame || e.source !== frame.contentWindow) return;
+    const data = e.data as { type?: unknown; href?: unknown; value?: unknown } | null;
+    if (!data || typeof data !== "object") return;
+    switch (data.type) {
+      case "link": {
+        const href = typeof data.href === "string" ? data.href : "";
+        if (/^https?:\/\//i.test(href)) api.openLink(href).catch((err) => (error = errorText(err)));
+        else hovered = href;
+        break;
+      }
+      case "hover":
+        hovered = typeof data.href === "string" ? data.href : null;
+        break;
+      case "height":
+        if (typeof data.value === "number" && Number.isFinite(data.value)) {
+          // +2 für den Rahmen des iframes; Inhaltshöhe, nicht Viewport
+          height = Math.min(Math.max(Math.round(data.value) + 2, 60), 20000);
+        }
+        break;
+    }
   }
 
-  function onFrameLoad() {
-    const doc = frame?.contentDocument;
-    if (!doc) return;
-    // Links niemals im iframe öffnen: http(s) in den Browser, alles andere nur anzeigen.
-    doc.addEventListener("click", (e) => {
-      const href = linkTarget(e);
-      if (href === null) return;
-      e.preventDefault();
-      if (/^https?:\/\//i.test(href)) api.openLink(href).catch((err) => (error = errorText(err)));
-      else hovered = href;
-    });
-    doc.addEventListener("mouseover", (e) => (hovered = linkTarget(e)));
-    doc.addEventListener("mouseout", (e) => {
-      if (linkTarget(e) !== null) hovered = null;
-    });
-    // Mailtext ist kein Markdown, Strg/Cmd-Klick etc. ebenfalls abfangen.
-    doc.addEventListener("auxclick", (e) => e.preventDefault());
-    measure();
-  }
-
-  function measure() {
-    const doc = frame?.contentDocument;
-    if (!doc) return;
-    height = Math.min(Math.max(doc.documentElement.scrollHeight + 4, 60), 20000);
-  }
+  $effect(() => {
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  });
 
   async function save(part: number) {
     saving = part;
@@ -121,11 +123,10 @@
       <iframe
         bind:this={frame}
         title="Mail-Inhalt"
-        sandbox="allow-same-origin"
+        sandbox="allow-scripts"
         referrerpolicy="no-referrer"
         srcdoc={body.html}
         style:height="{height}px"
-        onload={onFrameLoad}
       ></iframe>
     {:else}
       <pre class="text">{textFallback ?? "(kein Textinhalt)"}</pre>
@@ -165,10 +166,6 @@
     align-items: center;
     gap: 8px 12px;
     min-height: 24px;
-  }
-
-  .bar:empty {
-    display: none;
   }
 
   .segmented {

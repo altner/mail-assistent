@@ -199,7 +199,15 @@ Content-Type: multipart/mixed; boundary=\"outer\"\r\n\r\n\
         assert!(b.is_html);
         assert!(b.html.contains("src=\"data:image/png;base64,iVBORw==\""));
         assert!(!b.html.contains("t.example"));
-        assert!(!b.html.contains("<script"));
+        assert!(
+            !b.html.contains("<script>x</script>"),
+            "Mail-Skript entfernt"
+        );
+        assert_eq!(
+            b.html.matches("<script").count(),
+            1,
+            "nur das Brücken-Skript"
+        );
         assert_eq!(b.blocked_images, 1);
         assert_eq!(
             b.attachments,

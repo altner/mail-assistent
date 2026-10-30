@@ -93,11 +93,19 @@ Drei Schichten, jede für sich schon ausreichend (`src-tauri/src/mail/html.rs`, 
 1. **Bereinigung im Rust-Kern** mit `lol_html`: `script`, `iframe`, `object`, `embed`, `form`
    und Eingabefelder, `<base>` und `<meta http-equiv>` fliegen samt Inhalt raus, ebenso alle
    `on*`-Attribute und `javascript:`-Links. `url(...)` in Styles bleibt nur für `data:`.
-2. **`<iframe sandbox="allow-same-origin">`** ohne `allow-scripts`: kein JavaScript, keine
-   Formulare, keine Navigation, keine Popups. `allow-same-origin` braucht die App, um Klicks
-   abzufangen und die Höhe zu messen; ohne Skripte im Dokument ist das ungefährlich.
-3. **Eigene CSP im Mail-Dokument:** `default-src 'none'`, Bilder nur `data:` (mit Freigabe
-   zusätzlich `https:`), dazu `referrer: no-referrer`.
+2. **`<iframe sandbox="allow-scripts">`** ohne `allow-same-origin`: Das Mail-Dokument hat eine
+   fremde Herkunft und kann das App-Fenster nicht erreichen (kein DOM-Zugriff, keine IPC),
+   dazu keine Formulare, keine Navigation des Fensters, keine Popups.
+3. **Eigene CSP im Mail-Dokument:** `default-src 'none'`, `script-src` erlaubt per SHA-256-Hash
+   genau ein Skript, Bilder nur `data:` (mit Freigabe zusätzlich `https:`), dazu
+   `referrer: no-referrer`.
+
+Das eine erlaubte Skript ist das **Brücken-Skript der App** (`BRIDGE_JS` in `mail/html.rs`),
+das Rust in jedes bereinigte Dokument einsetzt. Es meldet Klicks auf Links, den Link unter dem
+Zeiger und die Inhaltshöhe per `postMessage`; das Frontend nimmt nur Nachrichten aus dem eigenen
+iframe an und öffnet nur `http(s)`. Skripte aus der Mail haben einen anderen Hash und laufen
+nicht. Der Umweg ist nötig, weil WebKit in einem iframe ohne `allow-scripts` keine
+Event-Listener ausführt, auch nicht die vom Elternfenster angehängten.
 
 **Bilder:** Eingebettete Bilder (`cid:`) werden aus der Mail selbst als `data:`-URL eingesetzt.
 Externe Bilder (auch in Styles) werden entfernt und gezählt; „Bilder laden“ gibt sie nur für diese
