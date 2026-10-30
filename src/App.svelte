@@ -1,19 +1,21 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { onSyncProgress } from "./lib/api";
-  import { applyProgress, refreshAccounts, store } from "./lib/state.svelte";
+  import { onAiProgress, onSyncProgress } from "./lib/api";
+  import { applyAiProgress, applyProgress, refreshAccounts, refreshAiOverview, store } from "./lib/state.svelte";
   import type { ListMode } from "./lib/types";
   import AccountManager from "./components/AccountManager.svelte";
   import ListPane from "./components/ListPane.svelte";
   import MailDetail from "./components/MailDetail.svelte";
   import ThreadView from "./components/ThreadView.svelte";
   import ReviewView from "./components/ReviewView.svelte";
+  import SettingsView from "./components/SettingsView.svelte";
 
-  type View = "mails" | "accounts" | "review";
+  type View = "mails" | "accounts" | "review" | "settings";
   const views: { id: View; label: string }[] = [
     { id: "mails", label: "Mails" },
     { id: "accounts", label: "Konten" },
     { id: "review", label: "Review" },
+    { id: "settings", label: "Einstellungen" },
   ];
 
   let view = $state<View>("mails");
@@ -39,9 +41,10 @@
 
   onMount(() => {
     refreshAccounts();
-    const unlisten = onSyncProgress(applyProgress);
+    refreshAiOverview();
+    const unlisten = Promise.all([onSyncProgress(applyProgress), onAiProgress(applyAiProgress)]);
     return () => {
-      unlisten.then((f) => f());
+      unlisten.then((fns) => fns.forEach((f) => f()));
     };
   });
 </script>
@@ -51,7 +54,12 @@
     <span class="brand">Mail-Assistent</span>
     <nav>
       {#each views as v (v.id)}
-        <button class:active={view === v.id} onclick={() => (view = v.id)}>{v.label}</button>
+        <button class:active={view === v.id} onclick={() => (view = v.id)}>
+          {v.label}
+          {#if v.id === "review" && store.aiOverview?.pending}
+            <span class="badge">{store.aiOverview.pending.toLocaleString("de-DE")}</span>
+          {/if}
+        </button>
       {/each}
     </nav>
   </header>
@@ -75,8 +83,10 @@
       {/if}
     {:else if view === "accounts"}
       <AccountManager />
-    {:else}
+    {:else if view === "review"}
       <ReviewView />
+    {:else}
+      <SettingsView />
     {/if}
   </main>
 </div>
@@ -114,6 +124,20 @@
   nav button.active {
     background: var(--selected);
     border-color: var(--border);
+  }
+
+  .badge {
+    display: inline-block;
+    min-width: 18px;
+    margin-left: 4px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 17px;
+    text-align: center;
   }
 
   main {

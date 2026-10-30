@@ -29,6 +29,8 @@ export interface MessageSummary {
   date: string | null;
   isRead: boolean;
   threadId: number | null;
+  /** bestätigte Kategorie, nie ein offener Vorschlag */
+  category: string | null;
 }
 
 export interface MessageDetail extends MessageSummary {
@@ -101,8 +103,84 @@ export interface SyncSummary {
 
 export interface AppInfo {
   dataDir: string;
-  ai: { ollamaUrl: string; model: string | null };
 }
+
+export type Preset = "ollama" | "omlx" | "splash" | "custom";
+
+export interface AiSettings {
+  preset: Preset;
+  url: string;
+  model: string | null;
+}
+
+export interface AiSettingsView extends AiSettings {
+  hasApiKey: boolean;
+  /** Server läuft auf diesem Rechner */
+  isLocal: boolean;
+}
+
+export interface Category {
+  id: number;
+  name: string;
+  description: string | null;
+  confirmedCount: number;
+}
+
+export interface CategoryInput {
+  name: string;
+  description: string | null;
+}
+
+export interface Tag {
+  id: number;
+  name: string;
+}
+
+export interface AiOverview {
+  pending: number;
+  candidates: number;
+  running: boolean;
+}
+
+export type RunPhase = "running" | "done" | "cancelled" | "failed";
+
+export interface RunProgress {
+  phase: RunPhase;
+  done: number;
+  total: number;
+  stored: number;
+  unreadable: number;
+  current: string | null;
+  error: string | null;
+}
+
+export interface ReviewTag {
+  id: number;
+  name: string;
+  source: "ai" | "user";
+  status: "pending" | "accepted" | "rejected";
+}
+
+export interface ReviewItem {
+  id: number;
+  categoryId: number | null;
+  categoryName: string | null;
+  confidence: number | null;
+  reason: string | null;
+  model: string | null;
+  tags: ReviewTag[];
+  message: MessageDetail;
+}
+
+export interface ReviewPage {
+  items: ReviewItem[];
+  total: number;
+}
+
+export type Decision =
+  | { kind: "accept" }
+  | { kind: "change"; categoryId: number }
+  | { kind: "reject" };
 
 export interface Address {
   name: string | null;

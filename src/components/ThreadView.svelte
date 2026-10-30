@@ -80,6 +80,10 @@
               <dd>{recipients(m.toAddrs)}</dd>
               <dt>Ordner</dt>
               <dd>{m.folderName}</dd>
+              {#if m.category}
+                <dt>Kategorie</dt>
+                <dd>{m.category}</dd>
+              {/if}
             </dl>
             <pre class="body">{m.bodyText ?? "(kein Textinhalt)"}</pre>
           {/if}

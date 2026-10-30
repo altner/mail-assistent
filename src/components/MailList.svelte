@@ -69,7 +69,10 @@
         <span class="dot" title={m.isRead ? "gelesen" : "ungelesen"} aria-label={m.isRead ? "gelesen" : "ungelesen"}></span>
         <span class="from">{sender(m.fromName, m.fromAddr)}</span>
         <span class="date">{shortDate(m.date)}</span>
-        <span class="subject">{m.subject ?? "(kein Betreff)"}</span>
+        <span class="subject">
+          {#if m.category}<span class="label">{m.category}</span>{/if}
+          {m.subject ?? "(kein Betreff)"}
+        </span>
         <span class="meta muted">
           {#if accountFilter === null}{accountNames.get(m.accountId)} · {/if}{m.folderName}
         </span>
@@ -154,6 +157,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .label {
+    display: inline-block;
+    margin-right: 4px;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--selected);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 17px;
+    vertical-align: 1px;
   }
 
   .meta {

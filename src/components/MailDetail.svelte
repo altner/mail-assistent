@@ -42,6 +42,8 @@
         <dd>{longDate(mail.date)}</dd>
         <dt>Ordner</dt>
         <dd>{mail.folderName} · {mail.isRead ? "gelesen" : "ungelesen"}</dd>
+        <dt>Kategorie</dt>
+        <dd>{mail.category ?? "–"}</dd>
       </dl>
     </header>
     <!-- Nur Klartext. HTML-Anzeige (abgeschotteter iframe) folgt in Phase 4. -->
