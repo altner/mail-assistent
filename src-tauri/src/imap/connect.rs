@@ -3,25 +3,15 @@ use std::time::Duration;
 
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use tokio_rustls::rustls::{self, pki_types::ServerName};
+use tokio_rustls::rustls::pki_types::ServerName;
 
 use super::session::ReadOnlySession;
 use crate::error::{Error, Result};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Baut die TLS-Konfiguration: rustls mit `ring`, Mozilla-Wurzelzertifikate.
 fn tls_connector() -> Result<TlsConnector> {
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .map_err(|e| Error::Tls(e.to_string()))?
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    Ok(TlsConnector::from(Arc::new(config)))
+    Ok(TlsConnector::from(Arc::new(crate::tls::client_config()?)))
 }
 
 /// Verbindet per implizitem TLS (in der Regel Port 993) und meldet sich an.

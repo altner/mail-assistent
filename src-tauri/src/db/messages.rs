@@ -107,6 +107,8 @@ pub struct MessageSummary {
     pub date: Option<String>,
     pub is_read: bool,
     pub thread_id: Option<i64>,
+    /// bestätigte Kategorie (übernommen oder geändert), nie ein offener Vorschlag
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,12 +123,23 @@ pub struct MessageDetail {
     pub raw_path: String,
 }
 
-/// Spalten 0–8 für [`MessageSummary`], 9–13 zusätzlich für [`MessageDetail`].
-const SELECT_DETAIL: &str =
-    "SELECT m.id, m.account_id, f.path, m.from_name, m.from_addr, m.subject,
-        m.date, m.is_read, m.thread_id,
-        m.message_id, m.in_reply_to, m.to_addrs, m.body_text, m.raw_path
-    FROM messages m JOIN imap_folders f ON f.id = m.folder_id";
+/// Spalten 0–9 für [`MessageSummary`].
+macro_rules! summary_columns {
+    () => {
+        "m.id, m.account_id, f.path, m.from_name, m.from_addr, m.subject, m.date, m.is_read,
+         m.thread_id,
+         (SELECT c.name FROM classifications k JOIN categories c ON c.id = k.category_id
+          WHERE k.message_id = m.id AND k.status IN ('accepted', 'changed'))"
+    };
+}
+
+/// Spalten 10–14 zusätzlich für [`MessageDetail`].
+const SELECT_DETAIL: &str = concat!(
+    "SELECT ",
+    summary_columns!(),
+    ", m.message_id, m.in_reply_to, m.to_addrs, m.body_text, m.raw_path
+     FROM messages m JOIN imap_folders f ON f.id = m.folder_id"
+);
 
 fn summary_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageSummary> {
     Ok(MessageSummary {
@@ -140,17 +153,18 @@ fn summary_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageSummary> {
         date: r.get(6)?,
         is_read: r.get::<_, Option<bool>>(7)?.unwrap_or(false),
         thread_id: r.get(8)?,
+        category: r.get(9)?,
     })
 }
 
 fn detail_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageDetail> {
     Ok(MessageDetail {
         summary: summary_from_row(r)?,
-        message_id: r.get(9)?,
-        in_reply_to: r.get(10)?,
-        to_addrs: r.get(11)?,
-        body_text: r.get(12)?,
-        raw_path: r.get(13)?,
+        message_id: r.get(10)?,
+        in_reply_to: r.get(11)?,
+        to_addrs: r.get(12)?,
+        body_text: r.get(13)?,
+        raw_path: r.get(14)?,
     })
 }
 
@@ -160,14 +174,14 @@ pub fn list(
     limit: u32,
     offset: u32,
 ) -> Result<Vec<MessageSummary>> {
-    let mut stmt = conn.prepare(
-        "SELECT m.id, m.account_id, f.path, m.from_name, m.from_addr, m.subject, m.date, m.is_read,
-                m.thread_id
-         FROM messages m JOIN imap_folders f ON f.id = m.folder_id
+    let mut stmt = conn.prepare(concat!(
+        "SELECT ",
+        summary_columns!(),
+        " FROM messages m JOIN imap_folders f ON f.id = m.folder_id
          WHERE ?1 IS NULL OR m.account_id = ?1
          ORDER BY m.date IS NULL, m.date DESC, m.id DESC
-         LIMIT ?2 OFFSET ?3",
-    )?;
+         LIMIT ?2 OFFSET ?3"
+    ))?;
     let rows = stmt.query_map(params![account_id, limit, offset], summary_from_row)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }

@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0001_init.sql"),
     include_str!("migrations/0002_threads.sql"),
+    include_str!("migrations/0003_ai.sql"),
 ];
 
 pub fn current_version(conn: &Connection) -> Result<usize> {

@@ -2,14 +2,19 @@
 //! Module delegieren, Fehler als Text zurückgeben.
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::ai::AiConfig;
+use crate::ai::AiSettings;
+use crate::ai::client::{self as ai_client, MessagesClient};
+use crate::ai::run::{self as ai_run, RunProgress};
 use crate::db::Db;
 use crate::db::accounts::{self, Account, NewAccount};
+use crate::db::categories::{self, Category, CategoryInput, Tag};
+use crate::db::classifications::{self, DecisionInput, ReviewItem};
 use crate::db::messages::{self, MessageDetail, MessageSummary};
 use crate::db::threads::{self, ThreadDetail, ThreadSummary};
 use crate::error::{Error, Result};
@@ -18,11 +23,14 @@ use crate::paths::DataPaths;
 use crate::secrets;
 
 pub const SYNC_PROGRESS_EVENT: &str = "sync://progress";
+pub const AI_PROGRESS_EVENT: &str = "ai://progress";
 
 pub struct AppState {
     pub db: Db,
     pub paths: DataPaths,
     running_syncs: Arc<Mutex<HashSet<i64>>>,
+    /// Abbruch-Schalter des laufenden Vorschlagslaufs (höchstens einer)
+    ai_run: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl AppState {
@@ -31,7 +39,14 @@ impl AppState {
             db,
             paths,
             running_syncs: Arc::default(),
+            ai_run: Mutex::default(),
         }
+    }
+
+    fn ai_slot(&self) -> Result<std::sync::MutexGuard<'_, Option<Arc<AtomicBool>>>> {
+        self.ai_run
+            .lock()
+            .map_err(|_| Error::Other("Sperre beschädigt".into()))
     }
 
     fn begin_sync(&self, account_id: i64) -> Result<SyncGuard> {
@@ -75,14 +90,12 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'sta
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     data_dir: String,
-    ai: AiConfig,
 }
 
 #[tauri::command]
 pub fn app_info(state: State<'_, AppState>) -> AppInfo {
     AppInfo {
         data_dir: state.paths.root().display().to_string(),
-        ai: AiConfig::default(),
     }
 }
 
@@ -204,4 +217,191 @@ pub fn list_threads(
 #[tauri::command]
 pub fn get_thread(state: State<'_, AppState>, id: i64) -> Result<ThreadDetail> {
     state.db.with(|c| threads::get(c, id))
+}
+
+// --- KI-Einstellungen -------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSettingsView {
+    #[serde(flatten)]
+    settings: AiSettings,
+    has_api_key: bool,
+    /// Server läuft auf diesem Rechner (sonst verlassen Mail-Inhalte das Gerät)
+    is_local: bool,
+}
+
+fn is_local(url: &str) -> bool {
+    ai_client::parse_base_url(url).is_ok_and(|u| ai_client::is_local(&u))
+}
+
+#[tauri::command]
+pub async fn get_ai_settings(state: State<'_, AppState>) -> Result<AiSettingsView> {
+    let settings = state.db.with(|c| AiSettings::load(c))?;
+    let has_api_key = blocking(secrets::get_ai_key).await?.is_some();
+    Ok(AiSettingsView {
+        is_local: is_local(&settings.url),
+        settings,
+        has_api_key,
+    })
+}
+
+/// `api_key`: `None` lässt den Schlüssel unverändert, `""` löscht ihn.
+#[tauri::command]
+pub async fn save_ai_settings(
+    state: State<'_, AppState>,
+    settings: AiSettings,
+    api_key: Option<String>,
+) -> Result<AiSettingsView> {
+    state.db.with(|c| settings.save(c))?;
+    if let Some(key) = api_key {
+        blocking(move || secrets::set_ai_key(key.trim())).await?;
+    }
+    get_ai_settings(state).await
+}
+
+/// Verbindungstest: liefert die Modelle des Servers. Ohne `api_key` wird der
+/// gespeicherte Schlüssel verwendet.
+#[tauri::command]
+pub async fn test_ai(url: String, api_key: Option<String>) -> Result<Vec<String>> {
+    let key = match api_key.filter(|k| !k.trim().is_empty()) {
+        Some(k) => Some(k.trim().to_string()),
+        None => blocking(secrets::get_ai_key).await?,
+    };
+    MessagesClient::new(&url, key)?.models().await
+}
+
+// --- Kategorien und Tags -----------------------------------------------------
+
+#[tauri::command]
+pub fn list_categories(state: State<'_, AppState>) -> Result<Vec<Category>> {
+    state.db.with(|c| categories::list(c))
+}
+
+#[tauri::command]
+pub fn create_category(state: State<'_, AppState>, input: CategoryInput) -> Result<i64> {
+    state.db.with(|c| categories::create(c, &input))
+}
+
+#[tauri::command]
+pub fn update_category(state: State<'_, AppState>, id: i64, input: CategoryInput) -> Result<()> {
+    state.db.with(|c| categories::update(c, id, &input))
+}
+
+#[tauri::command]
+pub fn delete_category(state: State<'_, AppState>, id: i64) -> Result<()> {
+    state.db.with(|c| categories::delete(c, id))
+}
+
+#[tauri::command]
+pub fn list_tags(state: State<'_, AppState>) -> Result<Vec<Tag>> {
+    state.db.with(|c| categories::list_tags(c))
+}
+
+#[tauri::command]
+pub fn create_tag(state: State<'_, AppState>, name: String) -> Result<i64> {
+    state.db.with(|c| categories::create_tag(c, &name))
+}
+
+#[tauri::command]
+pub fn rename_tag(state: State<'_, AppState>, id: i64, name: String) -> Result<()> {
+    state.db.with(|c| categories::rename_tag(c, id, &name))
+}
+
+#[tauri::command]
+pub fn delete_tag(state: State<'_, AppState>, id: i64) -> Result<()> {
+    state.db.with(|c| categories::delete_tag(c, id))
+}
+
+// --- Vorschläge und Review ---------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiOverview {
+    /// offene Vorschläge
+    pending: i64,
+    /// Mails ohne jeden Vorschlag
+    candidates: i64,
+    running: bool,
+}
+
+#[tauri::command]
+pub fn ai_overview(state: State<'_, AppState>) -> Result<AiOverview> {
+    let running = state.ai_slot()?.is_some();
+    state.db.with(|c| {
+        Ok(AiOverview {
+            pending: classifications::count_pending(c)?,
+            candidates: classifications::count_candidates(c)?,
+            running,
+        })
+    })
+}
+
+/// Holt Vorschläge für die nächsten `limit` Mails (Standard 50). Fortschritt
+/// kommt als Event `ai://progress`.
+#[tauri::command]
+pub async fn start_suggestions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+) -> Result<RunProgress> {
+    let settings = state.db.with(|c| AiSettings::load(c))?;
+    let model = settings.model.clone().ok_or_else(|| {
+        Error::Invalid("Bitte zuerst unter „Einstellungen“ ein Modell wählen".into())
+    })?;
+    let key = blocking(secrets::get_ai_key).await?;
+    let client = MessagesClient::new(&settings.url, key)?;
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut slot = state.ai_slot()?;
+        if slot.is_some() {
+            return Err(Error::Invalid("Es läuft bereits ein Vorschlagslauf".into()));
+        }
+        *slot = Some(cancel.clone());
+    }
+    let report = move |p: RunProgress| {
+        if let Err(e) = app.emit(AI_PROGRESS_EVENT, p) {
+            log::warn!("Fortschritt konnte nicht gesendet werden: {e}");
+        }
+    };
+    let limit = limit.unwrap_or(50).clamp(1, 1000);
+    let result = ai_run::suggest_batch(&state.db, &client, &model, limit, &cancel, &report).await;
+    *state.ai_slot()? = None;
+    result
+}
+
+#[tauri::command]
+pub fn cancel_suggestions(state: State<'_, AppState>) -> Result<()> {
+    if let Some(cancel) = state.ai_slot()?.as_ref() {
+        cancel.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewPage {
+    items: Vec<ReviewItem>,
+    total: i64,
+}
+
+#[tauri::command]
+pub fn list_review(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<ReviewPage> {
+    let limit = limit.unwrap_or(50).min(500);
+    state.db.with(|c| {
+        Ok(ReviewPage {
+            items: classifications::pending(c, limit, offset.unwrap_or(0))?,
+            total: classifications::count_pending(c)?,
+        })
+    })
+}
+
+#[tauri::command]
+pub fn decide_review(state: State<'_, AppState>, id: i64, input: DecisionInput) -> Result<()> {
+    state.db.with(|c| classifications::decide(c, id, &input))
 }

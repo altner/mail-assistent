@@ -6,6 +6,7 @@ pub mod imap;
 pub mod mail;
 pub mod paths;
 pub mod secrets;
+pub mod tls;
 
 use tauri::Manager;
 
@@ -43,6 +44,22 @@ pub fn run() {
             commands::get_message,
             commands::list_threads,
             commands::get_thread,
+            commands::get_ai_settings,
+            commands::save_ai_settings,
+            commands::test_ai,
+            commands::list_categories,
+            commands::create_category,
+            commands::update_category,
+            commands::delete_category,
+            commands::list_tags,
+            commands::create_tag,
+            commands::rename_tag,
+            commands::delete_tag,
+            commands::ai_overview,
+            commands::start_suggestions,
+            commands::cancel_suggestions,
+            commands::list_review,
+            commands::decide_review,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri-App konnte nicht gestartet werden");

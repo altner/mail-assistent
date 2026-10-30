@@ -36,3 +36,29 @@ pub fn delete_password(account_id: i64) -> Result<()> {
         Err(e) => Err(e.into()),
     }
 }
+
+/// API-Schlüssel des KI-Servers (optional, z. B. für oMLX).
+const AI_KEY_USER: &str = "ai-api-key";
+
+pub fn set_ai_key(key: &str) -> Result<()> {
+    if key.is_empty() {
+        return delete_ai_key();
+    }
+    Ok(Entry::new(SERVICE, AI_KEY_USER)?.set_password(key)?)
+}
+
+/// `None`, wenn kein Schlüssel hinterlegt ist.
+pub fn get_ai_key() -> Result<Option<String>> {
+    match Entry::new(SERVICE, AI_KEY_USER)?.get_password() {
+        Ok(key) => Ok(Some(key)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn delete_ai_key() -> Result<()> {
+    match Entry::new(SERVICE, AI_KEY_USER)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}

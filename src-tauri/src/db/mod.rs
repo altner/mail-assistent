@@ -1,9 +1,12 @@
 //! SQLite-Zugriff: Verbindung, Migrationen und Queries je Tabelle.
 
 pub mod accounts;
+pub mod categories;
+pub mod classifications;
 pub mod folders;
 pub mod messages;
 pub mod migrations;
+pub mod settings;
 pub mod threads;
 
 use std::path::Path;
@@ -78,6 +81,7 @@ mod tests {
                 "message_tags",
                 "messages",
                 "messages_fts",
+                "settings",
                 "tags",
                 "threads",
             ] {
@@ -166,12 +170,14 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         db.with(|conn| {
             let id = seed_message(conn, "Test");
-            conn.execute_batch("INSERT INTO categories (id, name) VALUES (1, 'Finanzen'), (2, 'Privat');")?;
+            conn.execute_batch(
+                "INSERT INTO categories (id, name) VALUES (101, 'Test A'), (102, 'Test B');",
+            )?;
             let insert = "INSERT INTO classifications (message_id, category_id, source, status) VALUES (?1, ?2, ?3, ?4)";
-            conn.execute(insert, rusqlite::params![id, 1, "ai", "pending"])?;
-            conn.execute(insert, rusqlite::params![id, 2, "ai", "pending"])?;
-            conn.execute(insert, rusqlite::params![id, 1, "user", "accepted"])?;
-            let second = conn.execute(insert, rusqlite::params![id, 2, "user", "changed"]);
+            conn.execute(insert, rusqlite::params![id, 101, "ai", "pending"])?;
+            conn.execute(insert, rusqlite::params![id, 102, "ai", "pending"])?;
+            conn.execute(insert, rusqlite::params![id, 101, "user", "accepted"])?;
+            let second = conn.execute(insert, rusqlite::params![id, 102, "user", "changed"]);
             assert!(second.is_err(), "zweite bestätigte Kategorie muss scheitern");
             Ok(())
         })

@@ -12,6 +12,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Schlüsselbund: {0}")]
     Secret(#[from] keyring::Error),
+    #[error("KI: {0}")]
+    Ai(String),
     #[error("TLS: {0}")]
     Tls(String),
     #[error("Mail konnte nicht gelesen werden: {0}")]
