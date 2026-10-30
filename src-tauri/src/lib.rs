@@ -1,5 +1,6 @@
 pub mod db;
 pub mod error;
+pub mod mail;
 pub mod paths;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
