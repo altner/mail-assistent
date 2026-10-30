@@ -1,4 +1,5 @@
 pub mod ai;
+mod commands;
 pub mod db;
 pub mod error;
 pub mod imap;
@@ -6,9 +7,31 @@ pub mod mail;
 pub mod paths;
 pub mod secrets;
 
+use tauri::Manager;
+
+use commands::AppState;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("mail_assistent_lib=info"))
+        .init();
+
     tauri::Builder::default()
+        .setup(|app| {
+            let paths = paths::DataPaths::init(app.path().app_data_dir()?)?;
+            log::info!("Datenverzeichnis: {}", paths.root().display());
+            let db = db::Db::open(&paths.db_file())?;
+            app.manage(AppState::new(db, paths));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::app_info,
+            commands::list_accounts,
+            commands::create_account,
+            commands::sync_account,
+            commands::list_messages,
+            commands::get_message,
+        ])
         .run(tauri::generate_context!())
         .expect("Tauri-App konnte nicht gestartet werden");
 }

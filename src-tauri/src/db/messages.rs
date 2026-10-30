@@ -2,6 +2,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 use crate::error::{Error, Result};
+use crate::imap::mutf7;
 
 #[derive(Debug, Clone)]
 pub struct NewMessage {
@@ -86,7 +87,10 @@ pub fn remap_uid(conn: &Connection, id: i64, uid: u32, is_read: bool) -> Result<
 pub struct MessageSummary {
     pub id: i64,
     pub account_id: i64,
+    /// Originalname auf dem Server
     pub folder_path: String,
+    /// dekodiert für die Anzeige
+    pub folder_name: String,
     pub from_name: Option<String>,
     pub from_addr: Option<String>,
     pub subject: Option<String>,
@@ -106,6 +110,7 @@ pub fn list(conn: &Connection, account_id: Option<i64>, limit: u32, offset: u32)
         Ok(MessageSummary {
             id: r.get(0)?,
             account_id: r.get(1)?,
+            folder_name: mutf7::decode(&r.get::<_, String>(2)?),
             folder_path: r.get(2)?,
             from_name: r.get(3)?,
             from_addr: r.get(4)?,
@@ -149,7 +154,8 @@ pub fn get(conn: &Connection, id: i64) -> Result<MessageDetail> {
                 summary: MessageSummary {
                     id: r.get(0)?,
                     account_id: r.get(1)?,
-                    folder_path: r.get(2)?,
+                    folder_name: mutf7::decode(&r.get::<_, String>(2)?),
+            folder_path: r.get(2)?,
                     from_name: r.get(3)?,
                     from_addr: r.get(4)?,
                     subject: r.get(5)?,
