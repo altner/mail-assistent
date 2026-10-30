@@ -4,8 +4,8 @@ Lokales Archiv für private IMAP-Postfächer mit (später) KI-Kategorisierung.
 Desktop-App mit Tauri v2 (Rust) und Svelte 5 + TypeScript. Die Server-Postfächer
 bleiben unangetastet und dienen nur als Backup.
 
-Stand: **Scaffold (Phase 1)**. Konten anlegen, Mails nur lesend abrufen und
-lokal archivieren, Mail-Liste mit Konto-Filter.
+Stand: **Phase 2**. Konten anlegen, Mails nur lesend abrufen und lokal
+archivieren, Mail-Liste mit Konto-Filter, als einzelne Mails oder als Konversationen.
 
 ## Harte Regeln
 
@@ -66,18 +66,37 @@ Log-Ausgabe: `RUST_LOG=mail_assistent_lib=debug npm run tauri dev`
 **Fingerprint:** SHA-256 aus Message-ID und Absender (kleingeschrieben). Fehlt die Message-ID:
 SHA-256 aus Absender, Datum (UTC), Betreff und den ersten 500 Zeichen Text (Leerraum normalisiert).
 
+## Konversationen
+
+Nach jedem Abruf (und beim Start für noch nicht zugeordnete Mails) werden die Konversationen
+des Kontos komplett neu berechnet (`mail/thread.rs`, `db/threads.rs`). Das dauert bei einigen
+tausend Mails Sekundenbruchteile und ordnet auch ältere Mails nachträglich richtig ein.
+
+1. **JWZ-Verknüpfung:** Jede Mail wird mit allen Message-IDs aus `References` und `In-Reply-To`
+   verbunden. Fehlt eine Mail im Archiv, hält ein Platzhalter die Antworten darauf zusammen.
+   Da die Ansicht chronologisch ist, reichen die Zusammenhangskomponenten (Union-Find); ein
+   Antwortbaum wird nicht gespeichert. Zirkelbezüge sind dadurch unproblematisch.
+2. **Betreff als Ersatz, bewusst eng:** Eine Konversation wird nur an eine frühere mit gleichem
+   Betreff (ohne Re/AW/Fwd/WG …) angehängt, wenn ihre erste Mail ein Antwort-Präfix trägt und
+   höchstens 60 Tage nach deren letzter Mail liegt. Mails wie „Ihre Rechnung“ bleiben getrennt.
+3. **Stabile IDs:** Eine Konversation behält ihre ID, solange die meisten ihrer Mails
+   zusammenbleiben. Verschmelzen zwei, bleibt die ID der größeren (bei Gleichstand die kleinere ID).
+
+Konversationen gelten pro Konto, wie die Duplikaterkennung.
+
 ## Struktur
 
 ```
 src/                         Svelte 5 + TS
   lib/          api.ts (invoke-Wrapper), types.ts, state.svelte.ts, format.ts
-  components/   AccountManager, MailList, MailDetail, ReviewView (Platzhalter)
+  components/   AccountManager, ListPane (Konto-Filter, Ansicht), MailList, ThreadList,
+                MailDetail, ThreadView, ReviewView (Platzhalter)
 src-tauri/src/
   lib.rs        Setup, AppState, Command-Registrierung
   commands.rs   Tauri-Commands
   db/           Verbindung, Migrationen (migrations/*.sql), Queries
   imap/         connect (TLS), session (nur lesen), sync, mutf7 (Ordnernamen)
-  mail/         parse, fingerprint, store (.eml), ingest (Übernahme ins Archiv)
+  mail/         parse, fingerprint, store (.eml), ingest (Übernahme ins Archiv), thread (JWZ)
   secrets/      Schlüsselbund-Wrapper
   ai/           Classifier-Trait + Platzhalter (Phase 3: Ollama, Standard http://localhost:11434)
 ```
@@ -89,14 +108,17 @@ Zusätzlich zum vorgegebenen Schema gibt es:
 - einen partiellen Unique-Index: höchstens eine bestätigte Kategorie (`accepted`/`changed`) pro Mail
 - FTS-Trigger für Insert, Update und Delete
 - Indizes auf `messages(account_id, date)`, `messages(date)` und `classifications(message_id)`
+- Migration 0002: `threads.account_id`, `threads.message_count`, `threads.unread_count`,
+  Index `threads(account_id, last_date)`
 
 ## Nächste Phasen
 
-- **2** Threading (JWZ über In-Reply-To/References, Fallback über normalisierten Betreff), Thread-Ansicht
+- ~~**2** Threading (JWZ über In-Reply-To/References, Fallback über normalisierten Betreff), Thread-Ansicht~~ erledigt
 - **3** Ollama-Anbindung, strukturierte Vorschläge mit Begründung, Review-UI mit Tastenkürzeln
 - **4** Volltextsuche im UI, HTML im abgeschotteten iframe, Anhänge
 - **5** Antwortentwürfe und SMTP (nur mit manueller Freigabe)
 - **6** mehrere Postfächer parallel, Windows/Linux, Signierung
 
-Noch offen im Scaffold: Konto bearbeiten oder löschen, Passwort ändern, Gelesen-Status
-bereits archivierter Mails aktualisieren (bisher nur beim ersten Abruf), STARTTLS.
+Noch offen: Konto bearbeiten oder löschen, Passwort ändern, Gelesen-Status
+bereits archivierter Mails aktualisieren (bisher nur beim ersten Abruf), STARTTLS,
+Konversationen über mehrere Konten, Gmail-Labels (`X-GM-LABELS`) übernehmen.
