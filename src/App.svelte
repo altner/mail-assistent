@@ -5,10 +5,12 @@
     applyAiProgress,
     applyProgress,
     applySendStatus,
+    isSyncing,
     refreshAccounts,
     refreshAiOverview,
     refreshDraftCount,
     store,
+    syncAll,
   } from "./lib/state.svelte";
   import type { ListMode } from "./lib/types";
   import AccountManager from "./components/AccountManager.svelte";
@@ -52,8 +54,11 @@
     }
   });
 
+  const syncingCount = $derived(store.accounts.filter((a) => isSyncing(a.id)).length);
+
   onMount(() => {
-    refreshAccounts();
+    // Einmal beim Start alle Konten abrufen (nur lesend, Regel 1).
+    refreshAccounts().then(syncAll);
     refreshAiOverview();
     refreshDraftCount();
     const unlisten = Promise.all([
@@ -83,6 +88,16 @@
         </button>
       {/each}
     </nav>
+    {#if store.accounts.length}
+      <button
+        class="sync"
+        disabled={syncingCount > 0}
+        onclick={syncAll}
+        title="Alle Konten gleichzeitig abrufen (nur lesend)"
+      >
+        {syncingCount > 0 ? `Ruft ab (${syncingCount}/${store.accounts.length}) …` : "Alle abrufen"}
+      </button>
+    {/if}
   </header>
 
   <main>
@@ -143,6 +158,10 @@
   nav {
     display: flex;
     gap: 4px;
+  }
+
+  .sync {
+    margin-left: auto;
   }
 
   nav button {

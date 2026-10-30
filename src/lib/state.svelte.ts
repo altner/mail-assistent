@@ -15,6 +15,8 @@ export const store = $state({
   accountsError: null as string | null,
   progress: {} as Record<number, SyncProgress>,
   lastSummary: {} as Record<number, SyncSummary>,
+  /** Konten, deren Abruf gestartet und noch nicht beendet ist */
+  syncing: {} as Record<number, boolean>,
   /** wird nach jedem Abruf erhöht, damit Listen neu laden */
   dataVersion: 0,
   /** Stand des Vorschlagslaufs (bleibt beim Reiterwechsel erhalten) */
@@ -47,6 +49,8 @@ export function applyProgress(p: SyncProgress) {
 }
 
 export async function syncAccount(accountId: number) {
+  if (store.syncing[accountId]) return;
+  store.syncing[accountId] = true;
   try {
     store.lastSummary[accountId] = await api.syncAccount(accountId);
   } catch (e) {
@@ -66,14 +70,19 @@ export async function syncAccount(accountId: number) {
       };
     }
   } finally {
+    delete store.syncing[accountId];
     store.dataVersion++;
     await refreshAccounts();
   }
 }
 
+/** Ruft alle Konten gleichzeitig ab; ein Fehler bei einem Konto hält die anderen nicht auf. */
+export async function syncAll() {
+  await Promise.all(store.accounts.map((a) => syncAccount(a.id)));
+}
+
 export function isSyncing(accountId: number): boolean {
-  const p = store.progress[accountId];
-  return !!p && (p.phase === "connecting" || p.phase === "folder");
+  return !!store.syncing[accountId];
 }
 
 export async function refreshAiOverview() {
