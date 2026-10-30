@@ -35,8 +35,12 @@ Versand nur nach Bestätigung.
 
 ## Voraussetzungen
 
-- Rust (stable) und Xcode Command Line Tools
-- Node.js ≥ 20 und npm
+- Rust (stable) und Node.js ≥ 20 mit npm
+- macOS: Xcode Command Line Tools
+- Windows: Microsoft C++ Build Tools und WebView2 (ab Windows 11 vorhanden)
+- Linux (Debian/Ubuntu): `sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+  libxdo-dev libdbus-1-dev patchelf pkg-config build-essential`. Zur Laufzeit braucht die App
+  einen Secret Service für die Passwörter (GNOME Schlüsselbund oder KWallet).
 
 ## Starten
 
@@ -57,7 +61,41 @@ npm run tauri build            # App-Bundle, ad-hoc signiert (keine Notarisierun
 
 Log-Ausgabe: `RUST_LOG=mail_assistent_lib=debug npm run tauri dev`
 
+## Builds für macOS, Windows und Linux
+
+Zwei GitHub-Actions-Workflows in `.github/workflows/`:
+
+- **Prüfen** (`check.yml`) läuft bei jedem Push unter Linux und Windows: svelte-check,
+  `cargo fmt --check`, Clippy ohne Warnungen, alle Rust-Tests.
+- **Bauen** (`build.yml`) erzeugt die Installer: `.dmg` (macOS, Apple Silicon), `.msi` und
+  Setup-`.exe` (Windows), `.deb`, `.rpm` und `.AppImage` (Linux). Er läuft nur auf Anfrage
+  (Actions → Bauen → Run workflow) oder bei einem Tag `v*`, damit die Actions-Minuten reichen
+  (macOS-Minuten zählen bei privaten Repos zehnfach). Die Dateien liegen danach als
+  Artefakte am Lauf.
+
+### Signierung und erster Start
+
+Die App ist nicht notarisiert und nur ad hoc signiert. Deshalb warnt das System beim ersten Start:
+
+- **macOS:** „kann nicht geöffnet werden“. In Finder Rechtsklick auf die App → Öffnen →
+  Öffnen. Ab macOS 15: Systemeinstellungen → Datenschutz & Sicherheit → „Dennoch öffnen“.
+  Jeder neue Build hat eine neue Ad-hoc-Signatur; der Schlüsselbund fragt dann einmal
+  erneut, ob die App auf die gespeicherten Passwörter zugreifen darf.
+- **Windows:** SmartScreen meldet einen unbekannten Herausgeber → „Weitere Informationen“ →
+  „Trotzdem ausführen“.
+- **Linux:** keine Signatur nötig. Die `.AppImage` vor dem Start ausführbar machen
+  (`chmod +x`).
+
+Für eine Developer ID (Apple Developer Program) später in `tauri.conf.json` unter
+`bundle.macOS.signingIdentity` den Zertifikatsnamen eintragen und im Workflow die
+Notarisierung über die Umgebungsvariablen `APPLE_ID`, `APPLE_PASSWORD` und `APPLE_TEAM_ID`
+(als GitHub-Secrets) ergänzen.
+
 ## Abruf: so funktioniert er
+
+Beim Start der App und über „Alle abrufen“ in der Kopfleiste werden alle Konten gleichzeitig
+abgerufen, jedes über eine eigene IMAP-Verbindung. Ein Fehler bei einem Konto hält die anderen
+nicht auf. Je Konto läuft höchstens ein Abruf.
 
 1. Anmeldung per TLS, `LIST "" "*"`. Papierkorb und Spam werden übersprungen (erkannt über
    SPECIAL-USE `\Trash`/`\Junk` oder übliche Namen). INBOX kommt zuerst, „Alle Nachrichten“ zuletzt.
@@ -259,7 +297,8 @@ Zusätzlich zum vorgegebenen Schema gibt es:
 - ~~**4** Volltextsuche im UI, HTML im abgeschotteten iframe, Anhänge~~ erledigt
 - ~~**5** Antwortentwürfe und SMTP (nur mit manueller Freigabe)~~ erledigt, dazu Rich-Text,
   Adressbuch, Signaturen, mehrere Absenderadressen und KI-Entwurf
-- **6** mehrere Postfächer parallel, Windows/Linux, Signierung
+- ~~**6** mehrere Postfächer parallel, Windows/Linux, Signierung~~ erledigt bis auf Developer ID
+  und Windows-Zertifikat (bisher nur ad hoc signiert)
 
 Noch offen: Konto bearbeiten oder löschen, Passwort ändern, Gelesen-Status
 bereits archivierter Mails aktualisieren (bisher nur beim ersten Abruf), STARTTLS (IMAP und
