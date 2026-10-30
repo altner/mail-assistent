@@ -106,43 +106,7 @@ pub struct MessageSummary {
     pub subject: Option<String>,
     pub date: Option<String>,
     pub is_read: bool,
-}
-
-pub fn list(
-    conn: &Connection,
-    account_id: Option<i64>,
-    limit: u32,
-    offset: u32,
-) -> Result<Vec<MessageSummary>> {
-    let mut stmt = conn.prepare(
-        "SELECT m.id, m.account_id, f.path, m.from_name, m.from_addr, m.subject, m.date, m.is_read
-         FROM messages m JOIN imap_folders f ON f.id = m.folder_id
-         WHERE ?1 IS NULL OR m.account_id = ?1
-         ORDER BY m.date IS NULL, m.date DESC, m.id DESC
-         LIMIT ?2 OFFSET ?3",
-    )?;
-    let rows = stmt.query_map(params![account_id, limit, offset], |r| {
-        Ok(MessageSummary {
-            id: r.get(0)?,
-            account_id: r.get(1)?,
-            folder_name: mutf7::decode(&r.get::<_, String>(2)?),
-            folder_path: r.get(2)?,
-            from_name: r.get(3)?,
-            from_addr: r.get(4)?,
-            subject: r.get(5)?,
-            date: r.get(6)?,
-            is_read: r.get::<_, Option<bool>>(7)?.unwrap_or(false),
-        })
-    })?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
-}
-
-pub fn count(conn: &Connection, account_id: Option<i64>) -> Result<i64> {
-    Ok(conn.query_row(
-        "SELECT count(*) FROM messages WHERE ?1 IS NULL OR account_id = ?1",
-        [account_id],
-        |r| r.get(0),
-    )?)
+    pub thread_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -157,34 +121,80 @@ pub struct MessageDetail {
     pub raw_path: String,
 }
 
+/// Spalten 0–8 für [`MessageSummary`], 9–13 zusätzlich für [`MessageDetail`].
+const SELECT_DETAIL: &str =
+    "SELECT m.id, m.account_id, f.path, m.from_name, m.from_addr, m.subject,
+        m.date, m.is_read, m.thread_id,
+        m.message_id, m.in_reply_to, m.to_addrs, m.body_text, m.raw_path
+    FROM messages m JOIN imap_folders f ON f.id = m.folder_id";
+
+fn summary_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageSummary> {
+    Ok(MessageSummary {
+        id: r.get(0)?,
+        account_id: r.get(1)?,
+        folder_name: mutf7::decode(&r.get::<_, String>(2)?),
+        folder_path: r.get(2)?,
+        from_name: r.get(3)?,
+        from_addr: r.get(4)?,
+        subject: r.get(5)?,
+        date: r.get(6)?,
+        is_read: r.get::<_, Option<bool>>(7)?.unwrap_or(false),
+        thread_id: r.get(8)?,
+    })
+}
+
+fn detail_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageDetail> {
+    Ok(MessageDetail {
+        summary: summary_from_row(r)?,
+        message_id: r.get(9)?,
+        in_reply_to: r.get(10)?,
+        to_addrs: r.get(11)?,
+        body_text: r.get(12)?,
+        raw_path: r.get(13)?,
+    })
+}
+
+pub fn list(
+    conn: &Connection,
+    account_id: Option<i64>,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<MessageSummary>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.id, m.account_id, f.path, m.from_name, m.from_addr, m.subject, m.date, m.is_read,
+                m.thread_id
+         FROM messages m JOIN imap_folders f ON f.id = m.folder_id
+         WHERE ?1 IS NULL OR m.account_id = ?1
+         ORDER BY m.date IS NULL, m.date DESC, m.id DESC
+         LIMIT ?2 OFFSET ?3",
+    )?;
+    let rows = stmt.query_map(params![account_id, limit, offset], summary_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn count(conn: &Connection, account_id: Option<i64>) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT count(*) FROM messages WHERE ?1 IS NULL OR account_id = ?1",
+        [account_id],
+        |r| r.get(0),
+    )?)
+}
+
 pub fn get(conn: &Connection, id: i64) -> Result<MessageDetail> {
     conn.query_row(
-        "SELECT m.id, m.account_id, f.path, m.from_name, m.from_addr, m.subject, m.date, m.is_read,
-                m.message_id, m.in_reply_to, m.to_addrs, m.body_text, m.raw_path
-         FROM messages m JOIN imap_folders f ON f.id = m.folder_id
-         WHERE m.id = ?1",
+        &format!("{SELECT_DETAIL} WHERE m.id = ?1"),
         [id],
-        |r| {
-            Ok(MessageDetail {
-                summary: MessageSummary {
-                    id: r.get(0)?,
-                    account_id: r.get(1)?,
-                    folder_name: mutf7::decode(&r.get::<_, String>(2)?),
-                    folder_path: r.get(2)?,
-                    from_name: r.get(3)?,
-                    from_addr: r.get(4)?,
-                    subject: r.get(5)?,
-                    date: r.get(6)?,
-                    is_read: r.get::<_, Option<bool>>(7)?.unwrap_or(false),
-                },
-                message_id: r.get(8)?,
-                in_reply_to: r.get(9)?,
-                to_addrs: r.get(10)?,
-                body_text: r.get(11)?,
-                raw_path: r.get(12)?,
-            })
-        },
+        detail_from_row,
     )
     .optional()?
     .ok_or_else(|| Error::NotFound(format!("Mail {id}")))
+}
+
+/// Alle Mails einer Konversation, älteste zuerst (ohne Datum zuletzt).
+pub fn list_by_thread(conn: &Connection, thread_id: i64) -> Result<Vec<MessageDetail>> {
+    let mut stmt = conn.prepare(&format!(
+        "{SELECT_DETAIL} WHERE m.thread_id = ?1 ORDER BY m.date IS NULL, m.date, m.id"
+    ))?;
+    let rows = stmt.query_map([thread_id], detail_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }

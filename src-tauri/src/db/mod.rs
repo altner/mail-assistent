@@ -4,6 +4,7 @@ pub mod accounts;
 pub mod folders;
 pub mod messages;
 pub mod migrations;
+pub mod threads;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};

@@ -5,3 +5,4 @@ pub mod fingerprint;
 pub mod ingest;
 pub mod parse;
 pub mod store;
+pub mod thread;

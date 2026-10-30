@@ -11,6 +11,7 @@ use crate::ai::AiConfig;
 use crate::db::Db;
 use crate::db::accounts::{self, Account, NewAccount};
 use crate::db::messages::{self, MessageDetail, MessageSummary};
+use crate::db::threads::{self, ThreadDetail, ThreadSummary};
 use crate::error::{Error, Result};
 use crate::imap::sync::{self, SyncProgress, SyncSummary};
 use crate::paths::DataPaths;
@@ -130,7 +131,23 @@ pub async fn sync_account(
             log::warn!("Fortschritt konnte nicht gesendet werden: {e}");
         }
     };
-    sync::sync_account(&state.db, &state.paths, &account, &password, &report).await
+    let result = sync::sync_account(&state.db, &state.paths, &account, &password, &report).await;
+
+    // Auch nach einem Abbruch: die bis dahin übernommenen Mails einordnen.
+    let db = state.db.clone();
+    let threading = blocking(move || db.with(|c| threads::rebuild(c, account_id))).await;
+    match (result, threading) {
+        (Ok(summary), Ok(_)) => Ok(summary),
+        (Ok(_), Err(e)) => Err(Error::Other(format!(
+            "Abruf fertig, Konversationen konnten nicht berechnet werden: {e}"
+        ))),
+        (Err(e), threading) => {
+            if let Err(t) = threading {
+                log::warn!("Konversationen nach Abbruch nicht berechnet: {t}");
+            }
+            Err(e)
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -159,4 +176,32 @@ pub fn list_messages(
 #[tauri::command]
 pub fn get_message(state: State<'_, AppState>, id: i64) -> Result<MessageDetail> {
     state.db.with(|c| messages::get(c, id))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadPage {
+    items: Vec<ThreadSummary>,
+    total: i64,
+}
+
+#[tauri::command]
+pub fn list_threads(
+    state: State<'_, AppState>,
+    account_id: Option<i64>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<ThreadPage> {
+    let limit = limit.unwrap_or(200).min(1000);
+    state.db.with(|c| {
+        Ok(ThreadPage {
+            items: threads::list(c, account_id, limit, offset.unwrap_or(0))?,
+            total: threads::count(c, account_id)?,
+        })
+    })
+}
+
+#[tauri::command]
+pub fn get_thread(state: State<'_, AppState>, id: i64) -> Result<ThreadDetail> {
+    state.db.with(|c| threads::get(c, id))
 }

@@ -23,6 +23,14 @@ pub fn run() {
             let paths = paths::DataPaths::init(app.path().app_data_dir()?)?;
             log::info!("Datenverzeichnis: {}", paths.root().display());
             let db = db::Db::open(&paths.db_file())?;
+            // Mails ohne Konversation (z. B. nach dem Update auf Schema 2) einordnen.
+            db.with(|c| {
+                for account_id in db::threads::accounts_needing_rebuild(c)? {
+                    let stats = db::threads::rebuild(c, account_id)?;
+                    log::info!("Konto {account_id}: {} Konversationen", stats.threads);
+                }
+                Ok(())
+            })?;
             app.manage(AppState::new(db, paths));
             Ok(())
         })
@@ -33,6 +41,8 @@ pub fn run() {
             commands::sync_account,
             commands::list_messages,
             commands::get_message,
+            commands::list_threads,
+            commands::get_thread,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri-App konnte nicht gestartet werden");
