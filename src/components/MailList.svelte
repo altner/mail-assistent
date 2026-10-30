@@ -10,21 +10,29 @@
 
   let {
     accountFilter,
+    query = "",
     selectedId = $bindable<number | null>(null),
     total = $bindable(0),
-  }: { accountFilter: number | null; selectedId?: number | null; total?: number } = $props();
+  }: {
+    accountFilter: number | null;
+    query?: string;
+    selectedId?: number | null;
+    total?: number;
+  } = $props();
 
   let items = $state<MessageSummary[]>([]);
   let error = $state<string | null>(null);
   let loading = $state(false);
 
-  async function load(filter: number | null, append = false) {
+  async function load(filter: number | null, q: string, append = false) {
     loading = true;
     try {
       const offset = append ? items.length : 0;
       // Beim Neuladen nach einem Abruf so viele Zeilen behalten wie sichtbar.
       const limit = append ? PAGE : Math.max(PAGE, items.length);
-      const page = await api.listMessages(filter, limit, offset);
+      const page = await api.listMessages(filter, q, limit, offset);
+      // Antwort einer älteren Suche verwerfen.
+      if (q !== query || filter !== accountFilter) return;
       items = append ? [...items, ...page.items] : page.items;
       total = page.total;
       error = null;
@@ -35,15 +43,17 @@
     }
   }
 
-  // Bei Filterwechsel von vorn, nach jedem Abruf-Block neu laden.
-  let lastFilter: number | null | undefined;
+  // Bei Filter- oder Suchwechsel von vorn, nach jedem Abruf-Block neu laden.
+  let last: string | undefined;
   $effect(() => {
     const filter = accountFilter;
+    const q = query;
     void store.dataVersion;
     untrack(() => {
-      if (filter !== lastFilter) items = [];
-      lastFilter = filter;
-      load(filter);
+      const key = `${filter}|${q}`;
+      if (key !== last) items = [];
+      last = key;
+      load(filter, q);
     });
   });
 
@@ -83,7 +93,7 @@
 
 {#if items.length < total}
   <div class="pad">
-    <button disabled={loading} onclick={() => load(accountFilter, true)}>
+    <button disabled={loading} onclick={() => load(accountFilter, query, true)}>
       Weitere laden ({items.length} von {total})
     </button>
   </div>

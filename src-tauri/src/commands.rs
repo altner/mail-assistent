@@ -171,18 +171,22 @@ pub struct MessagePage {
     total: i64,
 }
 
+/// Mit `query`: Volltextsuche (FTS5) in Betreff, Absender und Text.
 #[tauri::command]
 pub fn list_messages(
     state: State<'_, AppState>,
     account_id: Option<i64>,
+    query: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> Result<MessagePage> {
     let limit = limit.unwrap_or(200).min(1000);
+    let offset = offset.unwrap_or(0);
+    let query = query.unwrap_or_default();
     state.db.with(|c| {
         Ok(MessagePage {
-            items: messages::list(c, account_id, limit, offset.unwrap_or(0))?,
-            total: messages::count(c, account_id)?,
+            items: messages::search(c, &query, account_id, limit, offset)?,
+            total: messages::search_count(c, &query, account_id)?,
         })
     })
 }

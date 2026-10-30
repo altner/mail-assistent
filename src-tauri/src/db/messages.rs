@@ -194,6 +194,56 @@ pub fn count(conn: &Connection, account_id: Option<i64>) -> Result<i64> {
     )?)
 }
 
+/// Macht aus freier Eingabe eine FTS5-Abfrage: jedes Wort als Präfix,
+/// alle Wörter müssen vorkommen. Sonderzeichen der FTS-Syntax werden
+/// dadurch unschädlich. `None` bei leerer Eingabe.
+pub fn fts_query(input: &str) -> Option<String> {
+    let terms: Vec<String> = input
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|w| !w.is_empty())
+        .map(|w| format!("\"{}\"*", w.replace('"', "")))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" "))
+}
+
+/// Treffer aus Betreff, Absender und Text, neueste zuerst.
+pub fn search(
+    conn: &Connection,
+    query: &str,
+    account_id: Option<i64>,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<MessageSummary>> {
+    let Some(fts) = fts_query(query) else {
+        return list(conn, account_id, limit, offset);
+    };
+    let mut stmt = conn.prepare(concat!(
+        "SELECT ",
+        summary_columns!(),
+        " FROM messages_fts s
+         JOIN messages m ON m.id = s.rowid
+         JOIN imap_folders f ON f.id = m.folder_id
+         WHERE messages_fts MATCH ?1 AND (?2 IS NULL OR m.account_id = ?2)
+         ORDER BY m.date IS NULL, m.date DESC, m.id DESC
+         LIMIT ?3 OFFSET ?4"
+    ))?;
+    let rows = stmt.query_map(params![fts, account_id, limit, offset], summary_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn search_count(conn: &Connection, query: &str, account_id: Option<i64>) -> Result<i64> {
+    let Some(fts) = fts_query(query) else {
+        return count(conn, account_id);
+    };
+    Ok(conn.query_row(
+        "SELECT count(*) FROM messages_fts s JOIN messages m ON m.id = s.rowid
+         WHERE messages_fts MATCH ?1 AND (?2 IS NULL OR m.account_id = ?2)",
+        params![fts, account_id],
+        |r| r.get(0),
+    )?)
+}
+
 pub fn get(conn: &Connection, id: i64) -> Result<MessageDetail> {
     conn.query_row(
         &format!("{SELECT_DETAIL} WHERE m.id = ?1"),
@@ -211,4 +261,76 @@ pub fn list_by_thread(conn: &Connection, thread_id: i64) -> Result<Vec<MessageDe
     ))?;
     let rows = stmt.query_map([thread_id], detail_from_row)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+
+    fn seed(conn: &Connection, account: i64, subject: &str, from: &str, body: &str) -> i64 {
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, name, imap_host, username) VALUES (?1, 'A', 'h', 'u')",
+            [account],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO imap_folders (id, account_id, path) VALUES (?1, ?1, 'INBOX')",
+            [account],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (account_id, folder_id, uid, fingerprint, subject, from_name, body_text, raw_path, date)
+             VALUES (?1, ?1, abs(random() % 1000000), hex(randomblob(8)), ?2, ?3, ?4, 'x', '2026-01-01T00:00:00Z')",
+            params![account, subject, from, body],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn fts_query_quotes_terms_as_prefixes() {
+        assert_eq!(
+            fts_query("  Rechnung  märz "),
+            Some("\"Rechnung\"* \"märz\"*".into())
+        );
+        assert_eq!(
+            fts_query("a\"b (c) OR *"),
+            Some("\"ab\"* \"c\"* \"OR\"*".into())
+        );
+        assert_eq!(fts_query("   "), None);
+        assert_eq!(fts_query("(*)"), None);
+    }
+
+    #[test]
+    fn search_matches_subject_sender_body_and_account() {
+        let db = Db::open_in_memory().unwrap();
+        db.with(|c| {
+            let a = seed(c, 1, "Rechnung März", "Shop", "Betrag 42");
+            let b = seed(c, 1, "Urlaub", "Anna Beispiel", "Die Rechnung kommt später");
+            let other = seed(c, 2, "Rechnung", "Fremd", "x");
+
+            let ids = |q: &str, acc: Option<i64>| -> Vec<i64> {
+                search(c, q, acc, 50, 0)
+                    .unwrap()
+                    .iter()
+                    .map(|m| m.id)
+                    .collect()
+            };
+            let mut hits = ids("rechn", None);
+            hits.sort();
+            assert_eq!(hits, vec![a, b, other]);
+            assert_eq!(ids("rechnung betrag", None), vec![a]);
+            assert_eq!(ids("beispiel", None), vec![b]);
+            assert_eq!(ids("rechnung", Some(2)), vec![other]);
+            assert_eq!(search_count(c, "rechnung", Some(1))?, 2);
+            assert!(
+                ids("(((", None).len() == 3,
+                "nur Sonderzeichen = keine Einschränkung"
+            );
+            assert!(ids("gibtsnicht", None).is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
 }

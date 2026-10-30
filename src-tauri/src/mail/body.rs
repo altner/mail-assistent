@@ -50,7 +50,7 @@ pub fn attachments(raw: &[u8]) -> Result<Vec<AttachmentInfo>> {
                     .is_some_and(|c| c.ctype().eq_ignore_ascii_case("image"));
             !inline_image
         })
-        .filter_map(|p| {
+        .map(|p| {
             let (ctype, sub) = p
                 .content_type()
                 .map(|c| {
@@ -64,14 +64,13 @@ pub fn attachments(raw: &[u8]) -> Result<Vec<AttachmentInfo>> {
             let filename = p
                 .attachment_name()
                 .map(str::to_string)
-                .unwrap_or_else(|| fallback_name(u32::from(p.id()) as usize, &mime));
-            let size = p.decoded().len();
-            Some(AttachmentInfo {
-                part: u32::from(p.id()) as usize,
+                .unwrap_or_else(|| fallback_name(p.id() as usize, &mime));
+            AttachmentInfo {
+                part: p.id() as usize,
                 filename,
                 mime_type: mime,
-                size,
-            })
+                size: p.decoded().len(),
+            }
         })
         .collect())
 }

@@ -11,6 +11,29 @@
 
   let accountFilter = $state<number | null>(null);
   let total = $state(0);
+  let searchInput = $state("");
+  /** verzögert übernommene Suche, damit nicht jeder Tastendruck eine Abfrage auslöst */
+  let query = $state("");
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function onSearchInput() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      const next = searchInput.trim();
+      if (next === query) return;
+      query = next;
+      selectedId = null;
+      // Suche gibt es nur über einzelne Mails.
+      if (query && mode !== "messages") mode = "messages";
+    }, 200);
+  }
+
+  function clearSearch() {
+    clearTimeout(searchTimer);
+    searchInput = "";
+    query = "";
+    selectedId = null;
+  }
 
   function changeFilter(e: Event) {
     const value = (e.currentTarget as HTMLSelectElement).value;
@@ -23,6 +46,7 @@
     mode = next;
     selectedId = null;
     total = 0;
+    if (next === "threads" && query) clearSearch();
   }
 
   const modes: { id: ListMode; label: string }[] = [
@@ -49,14 +73,27 @@
     </div>
     <span class="muted count">
       {total.toLocaleString("de-DE")}
-      {mode === "threads" ? "Konversationen" : "Mails"}
+      {query ? "Treffer" : mode === "threads" ? "Konversationen" : "Mails"}
     </span>
+    <div class="search">
+      <input
+        type="search"
+        placeholder="Suchen in Betreff, Absender, Text"
+        aria-label="Volltextsuche"
+        bind:value={searchInput}
+        oninput={onSearchInput}
+        onkeydown={(e) => e.key === "Escape" && clearSearch()}
+      />
+      {#if searchInput}
+        <button class="clear" aria-label="Suche löschen" onclick={clearSearch}>×</button>
+      {/if}
+    </div>
   </div>
 
   {#if mode === "threads"}
     <ThreadList {accountFilter} bind:selectedId bind:total />
   {:else}
-    <MailList {accountFilter} bind:selectedId bind:total />
+    <MailList {accountFilter} {query} bind:selectedId bind:total />
   {/if}
 </section>
 
@@ -114,5 +151,27 @@
   .count {
     margin-left: auto;
     font-variant-numeric: tabular-nums;
+  }
+
+  .search {
+    position: relative;
+    flex: 1 0 100%;
+  }
+
+  .search input {
+    width: 100%;
+    padding-right: 28px;
+  }
+
+  .clear {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    transform: translateY(-50%);
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 0 6px;
+    line-height: 1;
   }
 </style>
