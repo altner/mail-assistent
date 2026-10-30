@@ -103,22 +103,44 @@ pub fn attachment_bytes(raw: &[u8], part: usize) -> Result<(String, String, Vec<
     Ok((info.filename, info.mime_type, p.decoded().into_owned()))
 }
 
-/// Dateiname ohne Pfadanteile und Steuerzeichen, für den Speichern-Dialog.
+/// Dateiname ohne Pfadanteile und Steuerzeichen, für den Speichern-Dialog
+/// und die Ablage von Entwurfsanhängen. Gültig auf allen drei Systemen, also
+/// auch ohne die unter Windows verbotenen Zeichen und Gerätenamen.
 pub fn safe_filename(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| match c {
-            '/' | '\\' | ':' | '\0' => '_',
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             c if c.is_control() => '_',
             c => c,
         })
         .collect();
-    let trimmed = cleaned.trim().trim_start_matches('.');
+    let limited: String = cleaned.chars().take(200).collect();
+    // Windows schneidet Punkte und Leerzeichen am Ende stillschweigend ab.
+    let trimmed = limited
+        .trim_start_matches(|c: char| c == '.' || c.is_whitespace())
+        .trim_end_matches(|c: char| c == '.' || c.is_whitespace());
     if trimmed.is_empty() {
-        "anhang".into()
-    } else {
-        trimmed.chars().take(200).collect()
+        return "anhang".into();
     }
+    if is_reserved_windows_name(trimmed) {
+        return format!("_{trimmed}");
+    }
+    trimmed.into()
+}
+
+/// CON, NUL, COM1 usw. sind unter Windows auch mit Endung („nul.txt“) gesperrt.
+fn is_reserved_windows_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end()
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit())
 }
 
 pub fn body(raw: &[u8], allow_remote: bool) -> Result<Body> {
@@ -248,5 +270,11 @@ Content-Type: multipart/mixed; boundary=\"outer\"\r\n\r\n\
         assert_eq!(safe_filename("  .hidden "), "hidden");
         assert_eq!(safe_filename(""), "anhang");
         assert_eq!(safe_filename("Rechnung 2026.pdf"), "Rechnung 2026.pdf");
+        assert_eq!(safe_filename("Was?<Ja>|\"x\"*.txt"), "Was__Ja___x__.txt");
+        assert_eq!(safe_filename("bericht. . "), "bericht");
+        assert_eq!(safe_filename("NUL.txt"), "_NUL.txt");
+        assert_eq!(safe_filename("com3"), "_com3");
+        assert_eq!(safe_filename("Console.txt"), "Console.txt");
+        assert_eq!(safe_filename("COMPUTER.pdf"), "COMPUTER.pdf");
     }
 }

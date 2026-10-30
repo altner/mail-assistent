@@ -25,10 +25,12 @@ pub fn store_eml(
     }
     let dir = target.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
-    let mut tmp = tempfile_in(dir)?;
-    tmp.1.write_all(raw)?;
-    tmp.1.sync_all()?;
-    std::fs::rename(&tmp.0, &target)?;
+    let (tmp, mut file) = tempfile_in(dir)?;
+    file.write_all(raw)?;
+    file.sync_all()?;
+    // Windows benennt keine geöffneten Dateien um, also vorher schließen.
+    drop(file);
+    std::fs::rename(&tmp, &target)?;
     Ok(relative)
 }
 

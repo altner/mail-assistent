@@ -10,8 +10,20 @@ use crate::error::{Error, Result};
 const SERVICE: &str = "de.adrianaltner.mailassistent";
 
 fn entry(account_id: i64) -> Result<Entry> {
-    Ok(Entry::new(SERVICE, &format!("imap-account-{account_id}"))?)
+    open(&format!("imap-account-{account_id}"))
 }
+
+/// Unter Linux fehlt der Speicher, wenn kein Secret Service läuft; das soll
+/// verständlich gemeldet werden statt als „NoDefaultStore“.
+fn open(user: &str) -> Result<Entry> {
+    Entry::new(SERVICE, user).map_err(|e| match e {
+        keyring::Error::NoDefaultStore => Error::Other(NO_STORE.into()),
+        e => e.into(),
+    })
+}
+
+const NO_STORE: &str = "Kein Schlüsselbund verfügbar. Unter Linux braucht die App einen \
+                        laufenden Secret Service, z. B. GNOME Schlüsselbund oder KWallet.";
 
 pub fn set_password(account_id: i64, password: &str) -> Result<()> {
     if password.is_empty() {
@@ -46,12 +58,12 @@ fn set_key(user: &str, key: &str) -> Result<()> {
     if key.is_empty() {
         return delete_key(user);
     }
-    Ok(Entry::new(SERVICE, user)?.set_password(key)?)
+    Ok(open(user)?.set_password(key)?)
 }
 
 /// `None`, wenn kein Schlüssel hinterlegt ist.
 fn get_key(user: &str) -> Result<Option<String>> {
-    match Entry::new(SERVICE, user)?.get_password() {
+    match open(user)?.get_password() {
         Ok(key) => Ok(Some(key)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(e.into()),
@@ -59,7 +71,7 @@ fn get_key(user: &str) -> Result<Option<String>> {
 }
 
 fn delete_key(user: &str) -> Result<()> {
-    match Entry::new(SERVICE, user)?.delete_credential() {
+    match open(user)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.into()),
     }
