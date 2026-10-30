@@ -35,6 +35,8 @@ futures = "0.3"
 
 # Mail-Verarbeitung
 mail-parser = "1"
+# Senden: nur rustls (ring, webpki-roots), implizites TLS
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "tokio1", "tokio1-rustls-tls"] }
 lol_html = "3"          # HTML-Bereinigung für die Anzeige (Regel 6)
 base64 = "0.22"         # eingebettete Bilder als data:-URL
 sha2 = "0.11"

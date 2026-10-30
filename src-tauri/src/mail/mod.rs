@@ -2,6 +2,7 @@
 //! Ablage als `.eml` und Übernahme ins Archiv.
 
 pub mod body;
+pub mod compose;
 pub mod fingerprint;
 pub mod html;
 pub mod ingest;

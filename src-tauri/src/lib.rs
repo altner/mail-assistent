@@ -6,6 +6,7 @@ pub mod imap;
 pub mod mail;
 pub mod paths;
 pub mod secrets;
+pub mod smtp;
 pub mod tls;
 
 use tauri::Manager;

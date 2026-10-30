@@ -3,7 +3,10 @@
 pub mod accounts;
 pub mod categories;
 pub mod classifications;
+pub mod contacts;
+pub mod drafts;
 pub mod folders;
+pub mod identities;
 pub mod messages;
 pub mod migrations;
 pub mod settings;
@@ -77,6 +80,9 @@ mod tests {
                 "attachments",
                 "categories",
                 "classifications",
+                "contacts",
+                "drafts",
+                "identities",
                 "imap_folders",
                 "message_tags",
                 "messages",

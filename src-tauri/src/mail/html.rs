@@ -136,6 +136,31 @@ fn strip_style_urls(style: &str, allow_remote: bool) -> String {
 }
 
 pub fn sanitize(html: &str, inline: &InlineImages<'_>, allow_remote: bool) -> Result<Sanitized> {
+    let (body, blocked) = sanitize_fragment(html, inline, allow_remote)?;
+    Ok(Sanitized {
+        html: format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">\
+             <meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\
+             <meta name=\"referrer\" content=\"no-referrer\">\
+             <style>html,body{{margin:0;padding:12px;font:14px/1.5 -apple-system,BlinkMacSystemFont,\
+             'Segoe UI',system-ui,sans-serif;color:#1f2328;background:#fff}}\
+             img{{max-width:100%;height:auto}}img[data-blocked]{{display:inline-block;min-width:16px;\
+             min-height:16px;border:1px dashed #bbb;background:#f3f3f3;color:#777;font-size:11px}}\
+             pre{{white-space:pre-wrap}}</style></head><body>{body}{}</body></html>",
+            csp(allow_remote),
+            bridge_tag()
+        ),
+        blocked_images: blocked,
+    })
+}
+
+/// Bereinigtes HTML ohne Dokumentrahmen, z. B. für Zitate in Antworten;
+/// dazu die Zahl blockierter externer Bilder.
+pub fn sanitize_fragment(
+    html: &str,
+    inline: &InlineImages<'_>,
+    allow_remote: bool,
+) -> Result<(String, usize)> {
     let blocked = Cell::new(0usize);
     let data_url = |cid: &str| -> Option<String> {
         let key = cid
@@ -244,22 +269,7 @@ pub fn sanitize(html: &str, inline: &InlineImages<'_>, allow_remote: bool) -> Re
         .map_err(|e| Error::Parse(format!("HTML konnte nicht bereinigt werden: {e}")))?;
 
     let body = strip_style_block_urls(&body, allow_remote, &blocked);
-
-    Ok(Sanitized {
-        html: format!(
-            "<!doctype html><html><head><meta charset=\"utf-8\">\
-             <meta http-equiv=\"Content-Security-Policy\" content=\"{}\">\
-             <meta name=\"referrer\" content=\"no-referrer\">\
-             <style>html,body{{margin:0;padding:12px;font:14px/1.5 -apple-system,BlinkMacSystemFont,\
-             'Segoe UI',system-ui,sans-serif;color:#1f2328;background:#fff}}\
-             img{{max-width:100%;height:auto}}img[data-blocked]{{display:inline-block;min-width:16px;\
-             min-height:16px;border:1px dashed #bbb;background:#f3f3f3;color:#777;font-size:11px}}\
-             pre{{white-space:pre-wrap}}</style></head><body>{body}{}</body></html>",
-            csp(allow_remote),
-            bridge_tag()
-        ),
-        blocked_images: blocked.get(),
-    })
+    Ok((body, blocked.get()))
 }
 
 /// `<style>`-Blöcke nachbearbeiten: lol_html liefert deren Text nicht als
@@ -291,6 +301,20 @@ fn strip_style_block_urls(html: &str, allow_remote: bool, blocked: &Cell<usize>)
     out
 }
 
+/// Klartext als HTML-Fragment: escaped, Zeilenumbrüche als `<br>`, Links klickbar.
+pub fn text_to_fragment(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 64);
+    out.push_str("<div>");
+    for (i, line) in text.lines().enumerate() {
+        if i > 0 {
+            out.push_str("<br>");
+        }
+        linkify_into(&mut out, line);
+    }
+    out.push_str("</div>");
+    out
+}
+
 /// Klartext als HTML-Dokument (für Mails ohne HTML-Teil), Links klickbar.
 pub fn text_as_html(text: &str) -> Sanitized {
     let mut body = String::with_capacity(text.len() + 64);
@@ -315,7 +339,14 @@ pub fn text_as_html(text: &str) -> Sanitized {
     }
 }
 
-fn escape_into(out: &mut String, s: &str) {
+/// HTML-Escaping für Text in Elementen und Attributen.
+pub fn escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    escape_into(&mut out, s);
+    out
+}
+
+pub fn escape_into(out: &mut String, s: &str) {
     for c in s.chars() {
         match c {
             '&' => out.push_str("&amp;"),
