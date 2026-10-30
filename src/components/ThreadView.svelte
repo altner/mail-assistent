@@ -4,6 +4,7 @@
   import { longDate, recipients, sender, shortDate } from "../lib/format";
   import type { ThreadDetail } from "../lib/types";
   import MailBody from "./MailBody.svelte";
+  import ReplyButtons from "./ReplyButtons.svelte";
 
   let { id }: { id: number | null } = $props();
 
@@ -86,7 +87,10 @@
                 <dd>{m.category}</dd>
               {/if}
             </dl>
-            <div class="body"><MailBody id={m.id} textFallback={m.bodyText} /></div>
+            <div class="body">
+              <div class="reply"><ReplyButtons messageId={m.id} /></div>
+              <MailBody id={m.id} textFallback={m.bodyText} />
+            </div>
           {/if}
         </li>
       {/each}
@@ -207,5 +211,9 @@
 
   .body {
     padding: 12px 12px 14px 30px;
+  }
+
+  .reply {
+    margin-bottom: 8px;
   }
 </style>

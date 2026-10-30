@@ -1,5 +1,13 @@
 import { api, errorText } from "./api";
-import type { Account, AiOverview, RunProgress, SyncProgress, SyncSummary } from "./types";
+import type {
+  Account,
+  AiOverview,
+  DraftKind,
+  RunProgress,
+  SendStatus,
+  SyncProgress,
+  SyncSummary,
+} from "./types";
 
 // App-weiter Zustand (Svelte-5-Runes).
 export const store = $state({
@@ -14,6 +22,13 @@ export const store = $state({
   aiOverview: null as AiOverview | null,
   /** wird nach jedem gespeicherten Vorschlag bzw. jeder Entscheidung erhöht */
   reviewVersion: 0,
+  /** geöffneter Entwurf im Editor */
+  composerDraftId: null as number | null,
+  /** wird erhöht, wenn Entwürfe dazukommen oder verschwinden */
+  draftsVersion: 0,
+  draftCount: 0,
+  /** Sendestatus je Entwurf (Wartezeit, Fehler) */
+  sendStatus: {} as Record<number, SendStatus>,
 });
 
 export async function refreshAccounts() {
@@ -99,5 +114,45 @@ export async function startSuggestions(limit = 50) {
   } finally {
     store.reviewVersion++;
     await refreshAiOverview();
+  }
+}
+
+export async function refreshDraftCount() {
+  try {
+    store.draftCount = (await api.listDrafts()).length;
+  } catch {
+    // nur Anzeige
+  }
+}
+
+export function openDraft(id: number) {
+  store.composerDraftId = id;
+}
+
+export function closeComposer() {
+  store.composerDraftId = null;
+}
+
+/** Antwort/Weiterleitung aus einer archivierten Mail anlegen und öffnen. */
+export async function composeFrom(messageId: number, kind: DraftKind): Promise<void> {
+  const draft = await api.prepareDraft(messageId, kind);
+  store.draftsVersion++;
+  refreshDraftCount();
+  openDraft(draft.id);
+}
+
+export async function composeNew(accountId: number): Promise<void> {
+  const draft = await api.newDraft(accountId);
+  store.draftsVersion++;
+  refreshDraftCount();
+  openDraft(draft.id);
+}
+
+export function applySendStatus(s: SendStatus) {
+  store.sendStatus[s.draftId] = s;
+  if (s.phase === "sent") {
+    store.dataVersion++;
+    store.draftsVersion++;
+    refreshDraftCount();
   }
 }

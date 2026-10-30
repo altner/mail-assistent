@@ -13,6 +13,8 @@ pub struct Account {
     pub username: String,
     pub created_at: String,
     pub message_count: i64,
+    pub smtp_host: Option<String>,
+    pub smtp_port: u16,
 }
 
 /// Kontodaten ohne Passwort; das Passwort geht direkt in den Schlüsselbund.
@@ -53,7 +55,8 @@ impl NewAccount {
 }
 
 const SELECT: &str = "SELECT a.id, a.name, a.imap_host, a.imap_port, a.username, a.created_at,
-        (SELECT count(*) FROM messages m WHERE m.account_id = a.id)
+        (SELECT count(*) FROM messages m WHERE m.account_id = a.id),
+        a.smtp_host, a.smtp_port
      FROM accounts a";
 
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
@@ -65,6 +68,8 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         username: r.get(4)?,
         created_at: r.get(5)?,
         message_count: r.get(6)?,
+        smtp_host: r.get(7)?,
+        smtp_port: r.get(8)?,
     })
 }
 

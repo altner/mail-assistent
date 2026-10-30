@@ -4,9 +4,11 @@ Lokales Archiv für private IMAP-Postfächer mit (später) KI-Kategorisierung.
 Desktop-App mit Tauri v2 (Rust) und Svelte 5 + TypeScript. Die Server-Postfächer
 bleiben unangetastet und dienen nur als Backup.
 
-Stand: **Phase 4**. Konten anlegen, Mails nur lesend abrufen und lokal archivieren,
+Stand: **Phase 5**. Konten anlegen, Mails nur lesend abrufen und lokal archivieren,
 Mail-Liste als einzelne Mails oder Konversationen, Volltextsuche, HTML-Anzeige im
-abgeschotteten iframe mit Anhängen, KI-Vorschläge für Kategorien und Tags mit Review.
+abgeschotteten iframe mit Anhängen, KI-Vorschläge für Kategorien und Tags mit Review,
+Antworten und Weiterleiten mit Rich-Text-Editor, Adressbuch, Signaturen, KI-Entwurf und
+Versand nur nach Bestätigung.
 
 ## Harte Regeln
 
@@ -17,7 +19,9 @@ abgeschotteten iframe mit Anhängen, KI-Vorschläge für Kategorien und Tags mit
 2. **Der Gelesen-Status wird nur eingelesen** (`\Seen` → `is_read`) und angezeigt, nie zurückgeschrieben.
 3. **Kategorien und Tags gibt es nur lokal**, mit einem gemeinsamen Schema für alle Postfächer.
 4. **Die KI schlägt nur vor.** Jeder Vorschlag bleibt `pending`, bis er im UI bestätigt oder geändert wird.
-5. **Nichts wird gesendet.** SMTP und Antwortentwürfe kommen erst in einer späteren Phase.
+5. **Gesendet wird nur, was du im Editor verfasst und im Dialog bestätigt hast.** Die KI
+   schreibt höchstens Entwürfe. Es gibt keinen Versand ohne den Dialog, keine Warteschlange,
+   die ohne dich sendet, und am IMAP-Postfach wird auch dabei nichts geschrieben. Siehe „Senden“.
 6. **HTML-Mails** werden nur in einem abgeschotteten iframe angezeigt: ohne JavaScript,
    externe Bilder standardmäßig blockiert. Siehe „HTML-Anzeige“.
 7. **Alle Daten liegen im App-Datenverzeichnis des Betriebssystems** (Tauri-Pfad-API),
@@ -128,6 +132,40 @@ als Präfix gesucht, alle Wörter müssen vorkommen („rechn märz“ findet �
 FTS-Sonderzeichen in der Eingabe sind unschädlich. Die Suche gilt für einzelne Mails; sie
 schaltet die Liste automatisch um.
 
+## Senden
+
+**Antworten, Allen antworten, Weiterleiten** (Knöpfe in der Mail- und Konversationsansicht) legen
+einen Entwurf an (`mail/compose.rs`): Empfänger aus `Reply-To` oder `From`, bei „Allen“ plus
+`To`/`Cc` ohne die eigenen Adressen; Antwort auf eine eigene Mail geht an deren Empfänger. Betreff
+ohne doppelte `Re:`/`AW:`/`Fwd:`. `In-Reply-To` und `References` werden gesetzt. Das Original
+steht bereinigt im `blockquote`, bei Weiterleitungen mit Kopfzeilen und den Original-Anhängen.
+Die **Identität** (Absenderadresse, Reiter „Konten“) wird automatisch gewählt: die angeschriebene,
+sonst die Standard-Identität; ihre **Signatur** steht mit `-- ` über dem Zitat und wechselt mit der
+Identität.
+
+**Editor** (`Composer.svelte`): Rich-Text ohne Fremdbibliothek (fett, kursiv, Listen, Zitat, Links
+nur `http(s)`), Einfügen nur als Text, automatisches Speichern. Dateien aus dem System-Dialog
+werden nach `drafts/<id>/` kopiert. Empfängerfelder schlagen Kontakte vor (häufigste zuerst).
+Gesendet wird `multipart/alternative` aus Klartext (`html_to_text`) und HTML; das HTML läuft vor
+dem Senden durch dieselbe Bereinigung wie beim Anzeigen.
+
+**KI-Entwurf**: Knopf mit Hinweisfeld (`ai/draft.rs`). Das Modell bekommt die Originalmail, den
+bisherigen Verlauf der Konversation, den Hinweis und den Namen der Identität und liefert nur den
+Text, der oben in den Editor kommt. Der Mailinhalt gilt wieder als fremdes Material.
+
+**Versand**: „Senden …“ öffnet den Dialog mit Konto, Absender, Empfängern, Betreff und Anhängen.
+Erst „Jetzt senden“ ruft `send_draft` auf; es gibt keinen anderen Aufrufer. Mit Wartezeit (Reiter
+„Einstellungen“: aus, 10, 30 oder 60 s) läuft zuerst eine Leiste „Wird in N s gesendet ·
+Rückgängig“; in der Zeit ist nichts beim Server. Beim Beenden der App geht nichts Wartendes raus,
+der Entwurf bleibt. SMTP (`smtp/`) nutzt `lettre` mit rustls/ring, nur implizites TLS (Port 465)
+und die IMAP-Zugangsdaten aus dem Schlüsselbund; „Anmeldung testen“ sendet nichts. Danach wird
+die Mail als `.eml` im lokalen Pseudo-Ordner `[Lokal]/Gesendet` des Kontos abgelegt (sichtbar in
+Liste und Konversation), die Empfänger landen im Adressbuch, der Entwurf verschwindet.
+
+**Adressbuch** (`db/contacts.rs`, Reiter „Kontakte“): Absender und Empfänger des Archivs werden
+beim Abruf gezählt, beim ersten Start nach dem Update einmal rückwirkend. Eigene Identitäten
+werden ausgelassen. Bearbeitete oder manuell angelegte Einträge überschreibt das Archiv nicht mehr.
+
 ## KI-Vorschläge
 
 Die KI läuft auf einem lokalen Server mit **Anthropic-Messages-Schnittstelle** (`POST /v1/messages`,
@@ -170,17 +208,23 @@ Vorschläge mit passender deutscher Begründung. Die MTP-Variante lädt in oMLX 
 src/                         Svelte 5 + TS
   lib/          api.ts (invoke-Wrapper), types.ts, state.svelte.ts, format.ts
   components/   AccountManager, ListPane (Konto-Filter, Ansicht, Suche), MailList, ThreadList,
-                MailDetail, ThreadView, MailBody (iframe, Links, Anhänge), ReviewView, SettingsView
+                MailDetail, ThreadView, MailBody (iframe, Links, Anhänge), ReplyButtons,
+                Composer (Editor, Dialog, Rückgängig), RecipientField, DraftsView, ContactsView,
+                AccountSending (SMTP, Identitäten), ReviewView, SettingsView
 src-tauri/src/
   lib.rs        Setup, AppState, Command-Registrierung
-  commands.rs   Tauri-Commands (Konten, Mails, Threads, KI-Einstellungen, Kategorien, Review)
+  commands.rs   Tauri-Commands (Konten, Mails, Threads, KI, Kategorien, Review, Entwürfe,
+                Kontakte, Identitäten, Senden)
   db/           Verbindung, Migrationen (migrations/*.sql), Queries
   imap/         connect (TLS), session (nur lesen), sync, mutf7 (Ordnernamen)
   mail/         parse, fingerprint, store (.eml), ingest (Übernahme ins Archiv), thread (JWZ),
-                html (Bereinigung), body (Anzeige-Inhalt und Anhänge aus der .eml)
+                html (Bereinigung), body (Anzeige-Inhalt und Anhänge aus der .eml),
+                compose (Antwort/Weiterleitung, MIME), outbox (Wartezeit, lokale Ablage)
   secrets/      Schlüsselbund-Wrapper (IMAP-Passwörter, API-Schlüssel des KI-Servers)
+  smtp/         Versand über lettre (rustls, SMTPS)
   tls.rs        gemeinsame rustls-Konfiguration für IMAP und HTTP
-  ai/           client (/v1/messages, /v1/models), prompt (Prompt + Auswertung), run (Vorschlagslauf)
+  ai/           client (/v1/messages, /v1/models), prompt (Prompt + Auswertung), run (Vorschlagslauf),
+                draft (Antwortentwurf)
 ```
 
 Neue Migrationen kommen als `src-tauri/src/db/migrations/000N_*.sql` dazu und werden in
@@ -194,6 +238,8 @@ Zusätzlich zum vorgegebenen Schema gibt es:
   Index `threads(account_id, last_date)`
 - Migration 0003: Tabelle `settings`, `classifications.suggested_category_id`,
   Index `classifications(status)`, Startkategorien
+- Migration 0004: `accounts.smtp_host/smtp_port`, Tabellen `identities`, `drafts`, `contacts`,
+  `imap_folders.is_local` (lokaler Gesendet-Ordner)
 
 ## Nächste Phasen
 
@@ -201,10 +247,12 @@ Zusätzlich zum vorgegebenen Schema gibt es:
 - ~~**3** KI-Anbindung, strukturierte Vorschläge mit Begründung, Review-UI mit Tastenkürzeln~~ erledigt
   (statt nur Ollama: jeder Server mit `/v1/messages`, also auch oMLX und Splash)
 - ~~**4** Volltextsuche im UI, HTML im abgeschotteten iframe, Anhänge~~ erledigt
-- **5** Antwortentwürfe und SMTP (nur mit manueller Freigabe)
+- ~~**5** Antwortentwürfe und SMTP (nur mit manueller Freigabe)~~ erledigt, dazu Rich-Text,
+  Adressbuch, Signaturen, mehrere Absenderadressen und KI-Entwurf
 - **6** mehrere Postfächer parallel, Windows/Linux, Signierung
 
 Noch offen: Konto bearbeiten oder löschen, Passwort ändern, Gelesen-Status
-bereits archivierter Mails aktualisieren (bisher nur beim ersten Abruf), STARTTLS,
+bereits archivierter Mails aktualisieren (bisher nur beim ersten Abruf), STARTTLS (IMAP und
+SMTP), abweichende SMTP-Zugangsdaten, HTML-Signaturen im UI (nur Text), Bilder im Editor,
 Konversationen über mehrere Konten, Gmail-Labels (`X-GM-LABELS`) übernehmen, Kategorie einer
 Mail nachträglich ändern (bisher nur im Review), Vorschläge für abgelehnte Mails erneut holen.

@@ -197,8 +197,30 @@
     }
   }
 
+  // --- Senden ---
+  let sendDelay = $state(0);
+  let sendStatus = $state<string | null>(null);
+  const delays = [
+    { v: 0, label: "Sofort senden" },
+    { v: 10, label: "10 Sekunden" },
+    { v: 30, label: "30 Sekunden" },
+    { v: 60, label: "60 Sekunden" },
+  ];
+
+  async function changeDelay(e: Event) {
+    const v = Number((e.currentTarget as HTMLSelectElement).value);
+    try {
+      await api.setSendDelay(v);
+      sendDelay = v;
+      sendStatus = "Gespeichert.";
+    } catch (err) {
+      sendStatus = errorText(err);
+    }
+  }
+
   onMount(() => {
     api.getAiSettings().then(applySaved, (e) => (aiStatus = { ok: false, text: errorText(e) }));
+    api.getSendDelay().then((d) => (sendDelay = d), () => {});
     loadCategories();
     loadTags();
   });
@@ -267,6 +289,25 @@
     <p class="muted small">Der API-Schlüssel liegt nur im Schlüsselbund des Systems.</p>
     <div><button class="primary" type="submit" disabled={savingAi}>{savingAi ? "Speichere …" : "Speichern"}</button></div>
   </form>
+
+  <div class="card">
+    <h2>Senden</h2>
+    <p class="muted small">
+      Jede Mail wird vor dem Senden in einem Dialog bestätigt. Zusätzlich kann eine Wartezeit mit
+      „Rückgängig“ gelten; in der Zeit ist die Mail noch nicht beim Server.
+    </p>
+    <label>
+      Wartezeit nach „Jetzt senden“
+      <select value={sendDelay} onchange={changeDelay}>
+        {#each delays as d (d.v)}<option value={d.v}>{d.label}</option>{/each}
+      </select>
+    </label>
+    {#if sendStatus}<p class="muted small">{sendStatus}</p>{/if}
+    <p class="muted small">
+      Gesendete Mails werden nur lokal unter „Gesendet (lokal)“ abgelegt. Am Server-Postfach
+      ändert die App nichts.
+    </p>
+  </div>
 
   <div class="card">
     <h2>Kategorien</h2>

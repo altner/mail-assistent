@@ -3,6 +3,7 @@
   import { api, errorText } from "../lib/api";
   import { isSyncing, refreshAccounts, store, syncAccount } from "../lib/state.svelte";
   import type { AppInfo, SyncProgress } from "../lib/types";
+  import AccountSending from "./AccountSending.svelte";
 
   let name = $state("");
   let imapHost = $state("");
@@ -94,6 +95,7 @@
               <div class="error small">Ordnerfehler: {summary.folderErrors.join("; ")}</div>
             {/if}
           {/if}
+          <AccountSending {account} />
         </li>
       {/each}
     </ul>

@@ -1,7 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { onAiProgress, onSyncProgress } from "./lib/api";
-  import { applyAiProgress, applyProgress, refreshAccounts, refreshAiOverview, store } from "./lib/state.svelte";
+  import { onAiProgress, onSendStatus, onSyncProgress } from "./lib/api";
+  import {
+    applyAiProgress,
+    applyProgress,
+    applySendStatus,
+    refreshAccounts,
+    refreshAiOverview,
+    refreshDraftCount,
+    store,
+  } from "./lib/state.svelte";
   import type { ListMode } from "./lib/types";
   import AccountManager from "./components/AccountManager.svelte";
   import ListPane from "./components/ListPane.svelte";
@@ -9,12 +17,17 @@
   import ThreadView from "./components/ThreadView.svelte";
   import ReviewView from "./components/ReviewView.svelte";
   import SettingsView from "./components/SettingsView.svelte";
+  import DraftsView from "./components/DraftsView.svelte";
+  import ContactsView from "./components/ContactsView.svelte";
+  import Composer from "./components/Composer.svelte";
 
-  type View = "mails" | "accounts" | "review" | "settings";
+  type View = "mails" | "drafts" | "contacts" | "accounts" | "review" | "settings";
   const views: { id: View; label: string }[] = [
     { id: "mails", label: "Mails" },
-    { id: "accounts", label: "Konten" },
+    { id: "drafts", label: "Entwürfe" },
     { id: "review", label: "Review" },
+    { id: "contacts", label: "Kontakte" },
+    { id: "accounts", label: "Konten" },
     { id: "settings", label: "Einstellungen" },
   ];
 
@@ -42,7 +55,12 @@
   onMount(() => {
     refreshAccounts();
     refreshAiOverview();
-    const unlisten = Promise.all([onSyncProgress(applyProgress), onAiProgress(applyAiProgress)]);
+    refreshDraftCount();
+    const unlisten = Promise.all([
+      onSyncProgress(applyProgress),
+      onAiProgress(applyAiProgress),
+      onSendStatus(applySendStatus),
+    ]);
     return () => {
       unlisten.then((fns) => fns.forEach((f) => f()));
     };
@@ -58,6 +76,9 @@
           {v.label}
           {#if v.id === "review" && store.aiOverview?.pending}
             <span class="badge">{store.aiOverview.pending.toLocaleString("de-DE")}</span>
+          {/if}
+          {#if v.id === "drafts" && store.draftCount}
+            <span class="badge soft">{store.draftCount}</span>
           {/if}
         </button>
       {/each}
@@ -85,10 +106,18 @@
       <AccountManager />
     {:else if view === "review"}
       <ReviewView />
+    {:else if view === "drafts"}
+      <DraftsView />
+    {:else if view === "contacts"}
+      <ContactsView />
     {:else}
       <SettingsView />
     {/if}
   </main>
+
+  {#if store.composerDraftId !== null}
+    <Composer id={store.composerDraftId} />
+  {/if}
 </div>
 
 <style>
@@ -124,6 +153,11 @@
   nav button.active {
     background: var(--selected);
     border-color: var(--border);
+  }
+
+  .badge.soft {
+    background: var(--surface-2);
+    color: var(--text-muted);
   }
 
   .badge {

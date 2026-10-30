@@ -3,6 +3,7 @@
   import { longDate, recipients, sender } from "../lib/format";
   import type { MessageDetail } from "../lib/types";
   import MailBody from "./MailBody.svelte";
+  import ReplyButtons from "./ReplyButtons.svelte";
 
   let { id }: { id: number | null } = $props();
 
@@ -30,7 +31,10 @@
     <p class="muted placeholder">{id === null ? "Mail auswählen" : "Lade …"}</p>
   {:else}
     <header>
-      <h2>{mail.subject ?? "(kein Betreff)"}</h2>
+      <div class="title">
+        <h2>{mail.subject ?? "(kein Betreff)"}</h2>
+        <ReplyButtons messageId={mail.id} />
+      </div>
       <dl>
         <dt>Von</dt>
         <dd>
@@ -63,8 +67,16 @@
     text-align: center;
   }
 
+  .title {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
   h2 {
-    margin: 0 0 12px;
+    margin: 0;
     font-size: 18px;
     font-weight: 600;
   }

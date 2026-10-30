@@ -8,13 +8,21 @@ import type {
   AppInfo,
   Category,
   CategoryInput,
+  Contact,
+  ContactInput,
   Decision,
+  Draft,
+  DraftKind,
+  DraftUpdate,
+  Identity,
+  IdentityInput,
   MailBody,
   MessageDetail,
   MessagePage,
   NewAccount,
   ReviewPage,
   RunProgress,
+  SendStatus,
   SyncProgress,
   SyncSummary,
   Tag,
@@ -70,7 +78,50 @@ export const api = {
   /** null: Dialog abgebrochen */
   saveAttachment: (id: number, part: number) =>
     invoke<string | null>("save_attachment", { id, part }),
+
+  updateAccountSmtp: (accountId: number, smtpHost: string, smtpPort: number) =>
+    invoke<Account>("update_account_smtp", { accountId, smtpHost, smtpPort }),
+  testSmtp: (accountId: number, smtpHost: string, smtpPort: number) =>
+    invoke<void>("test_smtp", { accountId, smtpHost, smtpPort }),
+  listIdentities: (accountId: number | null = null) =>
+    invoke<Identity[]>("list_identities", { accountId }),
+  createIdentity: (accountId: number, input: IdentityInput) =>
+    invoke<number>("create_identity", { accountId, input }),
+  updateIdentity: (id: number, input: IdentityInput) =>
+    invoke<void>("update_identity", { id, input }),
+  setDefaultIdentity: (id: number) => invoke<void>("set_default_identity", { id }),
+  deleteIdentity: (id: number) => invoke<void>("delete_identity", { id }),
+
+  prepareDraft: (messageId: number, kind: DraftKind) =>
+    invoke<Draft>("prepare_draft", { messageId, kind }),
+  newDraft: (accountId: number) => invoke<Draft>("new_draft", { accountId }),
+  listDrafts: () => invoke<Draft[]>("list_drafts"),
+  getDraft: (id: number) => invoke<Draft>("get_draft", { id }),
+  updateDraft: (id: number, update: DraftUpdate) => invoke<void>("update_draft", { id, update }),
+  deleteDraft: (id: number) => invoke<void>("delete_draft", { id }),
+  /** null: Dialog abgebrochen */
+  addDraftFile: (id: number) => invoke<Draft | null>("add_draft_file", { id }),
+  removeDraftAttachment: (id: number, index: number) =>
+    invoke<Draft>("remove_draft_attachment", { id, index }),
+
+  suggestContacts: (query: string) => invoke<Contact[]>("suggest_contacts", { query }),
+  listContacts: () => invoke<Contact[]>("list_contacts"),
+  createContact: (input: ContactInput) => invoke<number>("create_contact", { input }),
+  updateContact: (id: number, input: ContactInput) => invoke<void>("update_contact", { id, input }),
+  deleteContact: (id: number) => invoke<void>("delete_contact", { id }),
+  rebuildContacts: () => invoke<number>("rebuild_contacts"),
+
+  getSendDelay: () => invoke<number>("get_send_delay"),
+  setSendDelay: (seconds: number) => invoke<void>("set_send_delay", { seconds }),
+  /** Nur nach dem Bestätigungsdialog aufrufen. Löst erst nach Versand/Abbruch auf. */
+  sendDraft: (id: number) => invoke<SendStatus>("send_draft", { id }),
+  cancelSend: (id: number) => invoke<boolean>("cancel_send", { id }),
+  aiDraft: (id: number, hint: string) => invoke<string>("ai_draft", { id, hint: hint || null }),
 };
+
+export function onSendStatus(handler: (s: SendStatus) => void): Promise<UnlistenFn> {
+  return listen<SendStatus>("send://status", (event) => handler(event.payload));
+}
 
 export function onAiProgress(handler: (p: RunProgress) => void): Promise<UnlistenFn> {
   return listen<RunProgress>("ai://progress", (event) => handler(event.payload));

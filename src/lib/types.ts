@@ -8,6 +8,8 @@ export interface Account {
   username: string;
   createdAt: string;
   messageCount: number;
+  smtpHost: string | null;
+  smtpPort: number;
 }
 
 export interface NewAccount {
@@ -200,4 +202,81 @@ export interface MailBody {
   isHtml: boolean;
   blockedImages: number;
   attachments: AttachmentInfo[];
+}
+
+export interface Identity {
+  id: number;
+  accountId: number;
+  name: string;
+  email: string;
+  signatureText: string | null;
+  signatureHtml: string | null;
+  isDefault: boolean;
+}
+
+export interface IdentityInput {
+  name: string;
+  email: string;
+  signatureText: string | null;
+  signatureHtml: string | null;
+}
+
+export type DraftKind = "new" | "reply" | "reply_all" | "forward";
+
+export interface Recipient {
+  name: string | null;
+  address: string;
+}
+
+export type DraftAttachment =
+  | { source: "message"; messageId: number; part: number; name: string; mime: string; size: number }
+  | { source: "file"; path: string; name: string; mime: string; size: number };
+
+export interface Draft {
+  id: number;
+  accountId: number;
+  identityId: number | null;
+  inReplyToMessage: number | null;
+  kind: DraftKind;
+  to: Recipient[];
+  cc: Recipient[];
+  bcc: Recipient[];
+  subject: string;
+  bodyHtml: string;
+  attachments: DraftAttachment[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DraftUpdate {
+  identityId: number | null;
+  to: Recipient[];
+  cc: Recipient[];
+  bcc: Recipient[];
+  subject: string;
+  bodyHtml: string;
+}
+
+export interface Contact {
+  id: number;
+  email: string;
+  name: string | null;
+  source: "archive" | "manual";
+  seenCount: number;
+  lastSeen: string | null;
+}
+
+export interface ContactInput {
+  email: string;
+  name: string | null;
+}
+
+export type SendPhase = "waiting" | "sending" | "sent" | "cancelled" | "failed";
+
+export interface SendStatus {
+  draftId: number;
+  phase: SendPhase;
+  secondsLeft: number;
+  error: string | null;
+  messageId: number | null;
 }
