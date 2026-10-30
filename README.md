@@ -4,8 +4,9 @@ Lokales Archiv für private IMAP-Postfächer mit (später) KI-Kategorisierung.
 Desktop-App mit Tauri v2 (Rust) und Svelte 5 + TypeScript. Die Server-Postfächer
 bleiben unangetastet und dienen nur als Backup.
 
-Stand: **Phase 2**. Konten anlegen, Mails nur lesend abrufen und lokal
-archivieren, Mail-Liste mit Konto-Filter, als einzelne Mails oder als Konversationen.
+Stand: **Phase 3**. Konten anlegen, Mails nur lesend abrufen und lokal archivieren,
+Mail-Liste als einzelne Mails oder Konversationen, KI-Vorschläge für Kategorien und Tags
+mit Review.
 
 ## Harte Regeln
 
@@ -25,7 +26,8 @@ archivieren, Mail-Liste mit Konto-Filter, als einzelne Mails oder als Konversati
    - `mail/<konto>/<fp[0..2]>/<fingerprint>.eml`: Rohmails
 8. **Passwörter liegen nur im Schlüsselbund** (macOS Keychain, Windows Credential Manager,
    Linux Secret Service), Service `de.adrianaltner.mailassistent`. Sie stehen nie in der DB oder in Dateien.
-9. **TLS nur mit rustls** (ring, Mozilla-Wurzelzertifikate), kein OpenSSL. Nur implizites TLS (Port 993).
+9. **TLS nur mit rustls** (ring, Mozilla-Wurzelzertifikate), kein OpenSSL, auch für HTTP zum
+   KI-Server (`src-tauri/src/tls.rs`). IMAP nur mit implizitem TLS (Port 993).
 
 ## Voraussetzungen
 
@@ -84,21 +86,58 @@ tausend Mails Sekundenbruchteile und ordnet auch ältere Mails nachträglich ric
 
 Konversationen gelten pro Konto, wie die Duplikaterkennung.
 
+## KI-Vorschläge
+
+Die KI läuft auf einem lokalen Server mit **Anthropic-Messages-Schnittstelle** (`POST /v1/messages`,
+`GET /v1/models`). Getestet mit oMLX; Splash und Ollama bieten dieselbe Schnittstelle (Ollama erst
+in aktuellen Versionen). Unter „Einstellungen“ wird der Server gewählt (Vorlage, URL, Modell aus
+`/v1/models`, Verbindungstest). Ein API-Schlüssel (oMLX verlangt einen) liegt nur im Schlüsselbund.
+Zeigt die URL nicht auf diesen Rechner, warnt die App, weil Mail-Inhalte dann das Gerät verlassen.
+
+| Server | Standard-URL | API-Schlüssel |
+|---|---|---|
+| Ollama | `http://localhost:11434` | wird nicht geprüft |
+| oMLX | `http://127.0.0.1:8000` | nötig |
+| Splash | `http://127.0.0.1:8000` | nur mit `--api-key` |
+
+**Ablauf** (`src-tauri/src/ai/`): „Vorschläge für 50 Mails holen“ nimmt die neuesten Mails ohne
+Vorschlag. Das Modell bekommt Absender, Betreff, Datum, die ersten 1500 Zeichen Text sowie die
+Kategorien mit Beschreibung und die Tags, und antwortet mit JSON (`category`, `confidence`,
+`reason`, `tags`). Die Auswertung verträgt Denkphasen, Codeblöcke und Beiwerk; unbekannte
+Kategorien oder Tags werden verworfen, die KI legt also nichts an. Der Mailtext gilt als fremder
+Inhalt, Anweisungen darin werden laut Prompt ignoriert.
+
+**Regel 4 in der Datenbank:** Jeder Vorschlag ist `classifications.status = 'pending'`
+(Tags: `message_tags.status`). Erst das Review setzt `accepted`, `changed` (dann bleibt der
+ursprüngliche Vorschlag in `suggested_category_id`) oder `rejected`. Nur `accepted`/`changed`
+gelten als Kategorie der Mail. Bereits einmal vorgeschlagene Mails werden nicht erneut angefragt.
+
+**Review:** ⏎ übernehmen, 1–9 andere Kategorie (Reihenfolge wie unter „Einstellungen“),
+X ablehnen, J/K vor und zurück. Vorgeschlagene Tags sind vorausgewählt und abwählbar.
+
+Zum Start gibt es zehn Kategorien (Rechnungen, Bestellungen & Versand, Reisen, Finanzen,
+Verträge & Behörden, Arbeit, Persönlich, Newsletter, Benachrichtigungen, Werbung); alle änderbar.
+
+Erfahrung mit oMLX und `Qwen3.8-27B-4bit` auf einem M-Series-Mac mit 24 GB: etwa 15 s pro Mail,
+Vorschläge mit passender deutscher Begründung. Die MTP-Variante lädt in oMLX 0.7.2 nicht
+(„Model type qwen3_5_mtp not supported“).
+
 ## Struktur
 
 ```
 src/                         Svelte 5 + TS
   lib/          api.ts (invoke-Wrapper), types.ts, state.svelte.ts, format.ts
   components/   AccountManager, ListPane (Konto-Filter, Ansicht), MailList, ThreadList,
-                MailDetail, ThreadView, ReviewView (Platzhalter)
+                MailDetail, ThreadView, ReviewView, SettingsView
 src-tauri/src/
   lib.rs        Setup, AppState, Command-Registrierung
-  commands.rs   Tauri-Commands
+  commands.rs   Tauri-Commands (Konten, Mails, Threads, KI-Einstellungen, Kategorien, Review)
   db/           Verbindung, Migrationen (migrations/*.sql), Queries
   imap/         connect (TLS), session (nur lesen), sync, mutf7 (Ordnernamen)
   mail/         parse, fingerprint, store (.eml), ingest (Übernahme ins Archiv), thread (JWZ)
-  secrets/      Schlüsselbund-Wrapper
-  ai/           Classifier-Trait + Platzhalter (Phase 3: Ollama, Standard http://localhost:11434)
+  secrets/      Schlüsselbund-Wrapper (IMAP-Passwörter, API-Schlüssel des KI-Servers)
+  tls.rs        gemeinsame rustls-Konfiguration für IMAP und HTTP
+  ai/           client (/v1/messages, /v1/models), prompt (Prompt + Auswertung), run (Vorschlagslauf)
 ```
 
 Neue Migrationen kommen als `src-tauri/src/db/migrations/000N_*.sql` dazu und werden in
@@ -110,15 +149,19 @@ Zusätzlich zum vorgegebenen Schema gibt es:
 - Indizes auf `messages(account_id, date)`, `messages(date)` und `classifications(message_id)`
 - Migration 0002: `threads.account_id`, `threads.message_count`, `threads.unread_count`,
   Index `threads(account_id, last_date)`
+- Migration 0003: Tabelle `settings`, `classifications.suggested_category_id`,
+  Index `classifications(status)`, Startkategorien
 
 ## Nächste Phasen
 
 - ~~**2** Threading (JWZ über In-Reply-To/References, Fallback über normalisierten Betreff), Thread-Ansicht~~ erledigt
-- **3** Ollama-Anbindung, strukturierte Vorschläge mit Begründung, Review-UI mit Tastenkürzeln
+- ~~**3** KI-Anbindung, strukturierte Vorschläge mit Begründung, Review-UI mit Tastenkürzeln~~ erledigt
+  (statt nur Ollama: jeder Server mit `/v1/messages`, also auch oMLX und Splash)
 - **4** Volltextsuche im UI, HTML im abgeschotteten iframe, Anhänge
 - **5** Antwortentwürfe und SMTP (nur mit manueller Freigabe)
 - **6** mehrere Postfächer parallel, Windows/Linux, Signierung
 
 Noch offen: Konto bearbeiten oder löschen, Passwort ändern, Gelesen-Status
 bereits archivierter Mails aktualisieren (bisher nur beim ersten Abruf), STARTTLS,
-Konversationen über mehrere Konten, Gmail-Labels (`X-GM-LABELS`) übernehmen.
+Konversationen über mehrere Konten, Gmail-Labels (`X-GM-LABELS`) übernehmen, Kategorie einer
+Mail nachträglich ändern (bisher nur im Review), Vorschläge für abgelehnte Mails erneut holen.
