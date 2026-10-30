@@ -2,6 +2,7 @@
   import { api, errorText } from "../lib/api";
   import { longDate, recipients, sender } from "../lib/format";
   import type { MessageDetail } from "../lib/types";
+  import MailBody from "./MailBody.svelte";
 
   let { id }: { id: number | null } = $props();
 
@@ -46,8 +47,7 @@
         <dd>{mail.category ?? "–"}</dd>
       </dl>
     </header>
-    <!-- Nur Klartext. HTML-Anzeige (abgeschotteter iframe) folgt in Phase 4. -->
-    <pre class="body">{mail.bodyText ?? "(kein Textinhalt)"}</pre>
+    <MailBody id={mail.id} textFallback={mail.bodyText} />
   {/if}
 </section>
 
@@ -87,10 +87,4 @@
     overflow-wrap: anywhere;
   }
 
-  .body {
-    margin: 0;
-    font: 14px/1.55 var(--font);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
 </style>

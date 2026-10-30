@@ -20,6 +20,8 @@ pub fn run() {
     .init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let paths = paths::DataPaths::init(app.path().app_data_dir()?)?;
             log::info!("Datenverzeichnis: {}", paths.root().display());
@@ -60,6 +62,9 @@ pub fn run() {
             commands::cancel_suggestions,
             commands::list_review,
             commands::decide_review,
+            commands::get_message_body,
+            commands::open_link,
+            commands::save_attachment,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri-App konnte nicht gestartet werden");

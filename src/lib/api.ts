@@ -9,6 +9,7 @@ import type {
   Category,
   CategoryInput,
   Decision,
+  MailBody,
   MessageDetail,
   MessagePage,
   NewAccount,
@@ -62,6 +63,13 @@ export const api = {
   listReview: (limit = 50, offset = 0) => invoke<ReviewPage>("list_review", { limit, offset }),
   decideReview: (id: number, decision: Decision, tagIds: number[]) =>
     invoke<void>("decide_review", { id, input: { decision, tagIds } }),
+
+  getMessageBody: (id: number, allowRemote = false) =>
+    invoke<MailBody>("get_message_body", { id, allowRemote }),
+  openLink: (url: string) => invoke<void>("open_link", { url }),
+  /** null: Dialog abgebrochen */
+  saveAttachment: (id: number, part: number) =>
+    invoke<string | null>("save_attachment", { id, part }),
 };
 
 export function onAiProgress(handler: (p: RunProgress) => void): Promise<UnlistenFn> {

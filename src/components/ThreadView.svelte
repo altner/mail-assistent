@@ -3,6 +3,7 @@
   import { api, errorText } from "../lib/api";
   import { longDate, recipients, sender, shortDate } from "../lib/format";
   import type { ThreadDetail } from "../lib/types";
+  import MailBody from "./MailBody.svelte";
 
   let { id }: { id: number | null } = $props();
 
@@ -85,7 +86,7 @@
                 <dd>{m.category}</dd>
               {/if}
             </dl>
-            <pre class="body">{m.bodyText ?? "(kein Textinhalt)"}</pre>
+            <div class="body"><MailBody id={m.id} textFallback={m.bodyText} /></div>
           {/if}
         </li>
       {/each}
@@ -205,10 +206,6 @@
   }
 
   .body {
-    margin: 0;
     padding: 12px 12px 14px 30px;
-    font: 14px/1.55 var(--font);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
 </style>

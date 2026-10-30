@@ -19,6 +19,7 @@ use crate::db::messages::{self, MessageDetail, MessageSummary};
 use crate::db::threads::{self, ThreadDetail, ThreadSummary};
 use crate::error::{Error, Result};
 use crate::imap::sync::{self, SyncProgress, SyncSummary};
+use crate::mail::body::{self, Body};
 use crate::paths::DataPaths;
 use crate::secrets;
 
@@ -404,4 +405,71 @@ pub fn list_review(
 #[tauri::command]
 pub fn decide_review(state: State<'_, AppState>, id: i64, input: DecisionInput) -> Result<()> {
     state.db.with(|c| classifications::decide(c, id, &input))
+}
+
+// --- Mail-Inhalt, Links, Anhänge ---------------------------------------------
+
+fn raw_mail(state: &AppState, id: i64) -> Result<Vec<u8>> {
+    let detail = state.db.with(|c| messages::get(c, id))?;
+    let path = state.paths.resolve(&detail.raw_path);
+    std::fs::read(&path)
+        .map_err(|e| Error::Other(format!("Mail-Datei {} nicht lesbar: {e}", detail.raw_path)))
+}
+
+/// Bereinigtes HTML der Mail für den abgeschotteten iframe. Externe Bilder
+/// nur mit `allow_remote` (gilt nur für diesen Aufruf, wird nicht gespeichert).
+#[tauri::command]
+pub async fn get_message_body(
+    state: State<'_, AppState>,
+    id: i64,
+    allow_remote: Option<bool>,
+) -> Result<Body> {
+    let raw = raw_mail(&state, id)?;
+    blocking(move || body::body(&raw, allow_remote.unwrap_or(false))).await
+}
+
+/// Öffnet einen Link aus einer Mail im Standardbrowser. Nur http/https.
+#[tauri::command]
+pub fn open_link(app: AppHandle, url: String) -> Result<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let parsed = ai_client::parse_base_url(&url)?;
+    app.opener()
+        .open_url(parsed.as_str(), None::<&str>)
+        .map_err(|e| Error::Other(format!("Link konnte nicht geöffnet werden: {e}")))
+}
+
+/// Speichert einen Anhang über den System-Dialog. `Ok(None)`: abgebrochen.
+#[tauri::command]
+pub async fn save_attachment(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    part: usize,
+) -> Result<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let raw = raw_mail(&state, id)?;
+    let (name, _mime, bytes) = blocking(move || body::attachment_bytes(&raw, part)).await?;
+    let suggested = body::safe_filename(&name);
+
+    let chosen = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Anhang speichern")
+            .set_file_name(&suggested)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| Error::Other(format!("Dialog abgebrochen: {e}")))?;
+
+    let Some(target) = chosen else {
+        return Ok(None);
+    };
+    let path = target
+        .into_path()
+        .map_err(|e| Error::Other(format!("Ungültiger Speicherort: {e}")))?;
+    blocking(move || {
+        std::fs::write(&path, &bytes)?;
+        Ok(Some(path.display().to_string()))
+    })
+    .await
 }

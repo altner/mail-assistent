@@ -186,3 +186,18 @@ export interface Address {
   name: string | null;
   address: string | null;
 }
+
+export interface AttachmentInfo {
+  part: number;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface MailBody {
+  /** vollständiges Dokument für srcdoc, bereinigt, mit eigener CSP */
+  html: string;
+  isHtml: boolean;
+  blockedImages: number;
+  attachments: AttachmentInfo[];
+}
