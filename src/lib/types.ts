@@ -28,6 +28,7 @@ export interface MessageSummary {
   /** RFC 3339, UTC */
   date: string | null;
   isRead: boolean;
+  threadId: number | null;
 }
 
 export interface MessageDetail extends MessageSummary {
@@ -41,6 +42,31 @@ export interface MessageDetail extends MessageSummary {
 
 export interface MessagePage {
   items: MessageSummary[];
+  total: number;
+}
+
+/** Mail-Liste: einzelne Mails oder Konversationen */
+export type ListMode = "messages" | "threads";
+
+export interface ThreadSummary {
+  id: number;
+  accountId: number;
+  /** Betreff ohne Re:/AW:/Fwd: */
+  subject: string | null;
+  lastDate: string | null;
+  messageCount: number;
+  unreadCount: number;
+  /** Absender in der Reihenfolge ihres ersten Auftretens (höchstens 4) */
+  participants: string[];
+}
+
+export interface ThreadDetail extends ThreadSummary {
+  /** älteste zuerst */
+  messages: MessageDetail[];
+}
+
+export interface ThreadPage {
+  items: ThreadSummary[];
   total: number;
 }
 

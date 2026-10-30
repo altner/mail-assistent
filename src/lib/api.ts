@@ -8,6 +8,8 @@ import type {
   NewAccount,
   SyncProgress,
   SyncSummary,
+  ThreadDetail,
+  ThreadPage,
 } from "./types";
 
 // Fehler aus Rust kommen als Text an; invoke() wirft sie als string.
@@ -24,6 +26,9 @@ export const api = {
   listMessages: (accountId: number | null, limit = 200, offset = 0) =>
     invoke<MessagePage>("list_messages", { accountId, limit, offset }),
   getMessage: (id: number) => invoke<MessageDetail>("get_message", { id }),
+  listThreads: (accountId: number | null, limit = 200, offset = 0) =>
+    invoke<ThreadPage>("list_threads", { accountId, limit, offset }),
+  getThread: (id: number) => invoke<ThreadDetail>("get_thread", { id }),
 };
 
 export function onSyncProgress(handler: (p: SyncProgress) => void): Promise<UnlistenFn> {

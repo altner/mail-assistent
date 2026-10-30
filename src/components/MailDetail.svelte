@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, errorText } from "../lib/api";
-  import { longDate, sender } from "../lib/format";
-  import type { Address, MessageDetail } from "../lib/types";
+  import { longDate, recipients, sender } from "../lib/format";
+  import type { MessageDetail } from "../lib/types";
 
   let { id }: { id: number | null } = $props();
 
@@ -20,17 +20,6 @@
       })
       .catch((e) => (error = errorText(e)));
   });
-
-  function recipients(json: string | null): string {
-    if (!json) return "–";
-    try {
-      return (JSON.parse(json) as Address[])
-        .map((a) => (a.name ? `${a.name} <${a.address}>` : a.address))
-        .join(", ");
-    } catch {
-      return json;
-    }
-  }
 </script>
 
 <section class="detail">

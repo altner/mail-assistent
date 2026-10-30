@@ -1,3 +1,5 @@
+import type { Address } from "./types";
+
 const time = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" });
 const day = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 const full = new Intl.DateTimeFormat("de-DE", { dateStyle: "full", timeStyle: "short" });
@@ -19,4 +21,16 @@ export function longDate(iso: string | null): string {
 
 export function sender(name: string | null, addr: string | null): string {
   return name || addr || "(unbekannt)";
+}
+
+/** Empfänger aus dem gespeicherten JSON-Array als lesbare Liste. */
+export function recipients(json: string | null): string {
+  if (!json) return "–";
+  try {
+    return (JSON.parse(json) as Address[])
+      .map((a) => (a.name ? `${a.name} <${a.address}>` : a.address))
+      .join(", ");
+  } catch {
+    return json;
+  }
 }

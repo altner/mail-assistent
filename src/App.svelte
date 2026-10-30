@@ -2,9 +2,11 @@
   import { onMount } from "svelte";
   import { onSyncProgress } from "./lib/api";
   import { applyProgress, refreshAccounts, store } from "./lib/state.svelte";
+  import type { ListMode } from "./lib/types";
   import AccountManager from "./components/AccountManager.svelte";
-  import MailList from "./components/MailList.svelte";
+  import ListPane from "./components/ListPane.svelte";
   import MailDetail from "./components/MailDetail.svelte";
+  import ThreadView from "./components/ThreadView.svelte";
   import ReviewView from "./components/ReviewView.svelte";
 
   type View = "mails" | "accounts" | "review";
@@ -16,6 +18,24 @@
 
   let view = $state<View>("mails");
   let selectedId = $state<number | null>(null);
+
+  // Gewählte Listenansicht nur als Komfort im Browser-Speicher merken.
+  const MODE_KEY = "list-mode";
+  function storedMode(): ListMode {
+    try {
+      return localStorage.getItem(MODE_KEY) === "messages" ? "messages" : "threads";
+    } catch {
+      return "threads";
+    }
+  }
+  let listMode = $state<ListMode>(storedMode());
+  $effect(() => {
+    try {
+      localStorage.setItem(MODE_KEY, listMode);
+    } catch {
+      // ohne Speicher gilt beim nächsten Start wieder die Vorgabe
+    }
+  });
 
   onMount(() => {
     refreshAccounts();
@@ -45,8 +65,12 @@
         </div>
       {:else}
         <div class="split">
-          <MailList bind:selectedId />
-          <MailDetail id={selectedId} />
+          <ListPane bind:mode={listMode} bind:selectedId />
+          {#if listMode === "threads"}
+            <ThreadView id={selectedId} />
+          {:else}
+            <MailDetail id={selectedId} />
+          {/if}
         </div>
       {/if}
     {:else if view === "accounts"}
