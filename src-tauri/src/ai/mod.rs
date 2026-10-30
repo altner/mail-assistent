@@ -6,6 +6,7 @@
 //! erst im Review bestätigt, geändert oder verworfen.
 
 pub mod client;
+pub mod draft;
 pub mod prompt;
 pub mod run;
 

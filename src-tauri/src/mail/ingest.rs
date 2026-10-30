@@ -6,6 +6,7 @@ use serde::Serialize;
 use super::fingerprint::{fingerprint, fingerprint_raw};
 use super::parse::{ParsedMail, parse};
 use super::store::store_eml;
+use crate::db::contacts;
 use crate::db::folders::{self, Folder};
 use crate::db::messages::{self, NewMessage};
 use crate::error::Result;
@@ -68,6 +69,18 @@ pub fn ingest_batch(
             }
         };
 
+        // Für das Adressbuch, bevor `parsed` zerlegt wird.
+        let parsed_contacts: Vec<(String, Option<String>, Option<String>)> = parsed
+            .from_addr
+            .iter()
+            .map(|a| (a.clone(), parsed.from_name.clone(), parsed.date.clone()))
+            .chain(parsed.to.iter().filter_map(|r| {
+                r.address
+                    .as_ref()
+                    .map(|a| (a.clone(), r.name.clone(), parsed.date.clone()))
+            }))
+            .collect();
+
         match messages::find_by_fingerprint(&tx, folder.account_id, &fp)? {
             // Nach UIDVALIDITY-Wechsel: bekannte Mail bekommt ihre neue UID.
             Some(e) if e.folder_id == folder.id && e.uid < 0 => {
@@ -97,7 +110,10 @@ pub fn ingest_batch(
                     is_read: msg.seen,
                 };
                 match messages::insert(&tx, &new)? {
-                    Some(_) => stats.inserted += 1,
+                    Some(_) => {
+                        stats.inserted += 1;
+                        record_contacts(&tx, &parsed_contacts)?;
+                    }
                     None => stats.duplicates += 1,
                 }
             }
@@ -109,6 +125,28 @@ pub fn ingest_batch(
     }
     tx.commit()?;
     Ok(stats)
+}
+
+/// Absender und Empfänger ins Adressbuch zählen; eigene Adressen nicht.
+fn record_contacts(
+    conn: &Connection,
+    list: &[(String, Option<String>, Option<String>)],
+) -> Result<()> {
+    if list.is_empty() {
+        return Ok(());
+    }
+    let own: Vec<String> = {
+        let mut stmt = conn.prepare_cached("SELECT email FROM identities")?;
+        stmt.query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    for (addr, name, date) in list {
+        if own.iter().any(|o| o.eq_ignore_ascii_case(addr)) {
+            continue;
+        }
+        contacts::record_seen(conn, addr, name.as_deref(), date.as_deref())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

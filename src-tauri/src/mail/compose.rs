@@ -343,11 +343,7 @@ pub fn html_to_text(html: &str) -> String {
             }
         }
         let ch = html[i..].chars().next().unwrap();
-        if ch == '\n' || ch == '\r' || ch == '\t' {
-            if !at_line_start && !out.ends_with(' ') {
-                out.push(' ');
-            }
-        } else if ch == ' ' {
+        if ch.is_whitespace() {
             if !at_line_start && !out.ends_with(' ') {
                 out.push(' ');
             }

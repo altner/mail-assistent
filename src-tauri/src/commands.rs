@@ -1,7 +1,7 @@
 //! Tauri-Commands für das Frontend. Dünne Schicht: validieren, an die
 //! Module delegieren, Fehler als Text zurückgeben.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -15,16 +15,24 @@ use crate::db::Db;
 use crate::db::accounts::{self, Account, NewAccount};
 use crate::db::categories::{self, Category, CategoryInput, Tag};
 use crate::db::classifications::{self, DecisionInput, ReviewItem};
+use crate::db::contacts::{self, Contact, ContactInput};
+use crate::db::drafts::{self, Draft, DraftAttachment, DraftKind, DraftUpdate, NewDraft};
+use crate::db::identities::{self, Identity, IdentityInput};
 use crate::db::messages::{self, MessageDetail, MessageSummary};
 use crate::db::threads::{self, ThreadDetail, ThreadSummary};
 use crate::error::{Error, Result};
 use crate::imap::sync::{self, SyncProgress, SyncSummary};
 use crate::mail::body::{self, Body};
+use crate::mail::compose::{self, Outgoing, OutgoingAttachment, ReplyHeaders};
+use crate::mail::html;
+use crate::mail::outbox::{self, SendPhase, SendStatus};
 use crate::paths::DataPaths;
 use crate::secrets;
+use crate::smtp::{self, SmtpConfig};
 
 pub const SYNC_PROGRESS_EVENT: &str = "sync://progress";
 pub const AI_PROGRESS_EVENT: &str = "ai://progress";
+pub const SEND_STATUS_EVENT: &str = "send://status";
 
 pub struct AppState {
     pub db: Db,
@@ -32,6 +40,8 @@ pub struct AppState {
     running_syncs: Arc<Mutex<HashSet<i64>>>,
     /// Abbruch-Schalter des laufenden Vorschlagslaufs (höchstens einer)
     ai_run: Mutex<Option<Arc<AtomicBool>>>,
+    /// Wartende Sendeaufträge je Entwurf („Rückgängig“)
+    pending_sends: Mutex<HashMap<i64, Arc<AtomicBool>>>,
 }
 
 impl AppState {
@@ -41,6 +51,7 @@ impl AppState {
             paths,
             running_syncs: Arc::default(),
             ai_run: Mutex::default(),
+            pending_sends: Mutex::default(),
         }
     }
 
@@ -476,4 +487,594 @@ pub async fn save_attachment(
         Ok(Some(path.display().to_string()))
     })
     .await
+}
+
+// --- SMTP und Identitäten ----------------------------------------------------
+
+#[tauri::command]
+pub fn update_account_smtp(
+    state: State<'_, AppState>,
+    account_id: i64,
+    smtp_host: String,
+    smtp_port: u16,
+) -> Result<Account> {
+    let host = smtp_host.trim().to_ascii_lowercase();
+    if host.contains(|c: char| c.is_whitespace() || c == '/' || c == ':') {
+        return Err(Error::Invalid(
+            "Server bitte ohne Protokoll/Port angeben".into(),
+        ));
+    }
+    if smtp_port == 0 {
+        return Err(Error::Invalid("Port fehlt".into()));
+    }
+    state.db.with(|c| {
+        c.execute(
+            "UPDATE accounts SET smtp_host = ?2, smtp_port = ?3 WHERE id = ?1",
+            rusqlite::params![account_id, (!host.is_empty()).then_some(host), smtp_port],
+        )?;
+        accounts::get(c, account_id)
+    })
+}
+
+/// Anmeldung am SMTP-Server prüfen, ohne etwas zu senden.
+#[tauri::command]
+pub async fn test_smtp(
+    state: State<'_, AppState>,
+    account_id: i64,
+    smtp_host: String,
+    smtp_port: u16,
+) -> Result<()> {
+    let account = state.db.with(|c| accounts::get(c, account_id))?;
+    let password = blocking(move || secrets::get_password(account_id)).await?;
+    smtp::test_connection(&SmtpConfig {
+        host: smtp_host.trim(),
+        port: smtp_port,
+        username: &account.username,
+        password: &password,
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn list_identities(
+    state: State<'_, AppState>,
+    account_id: Option<i64>,
+) -> Result<Vec<Identity>> {
+    state.db.with(|c| identities::list(c, account_id))
+}
+
+#[tauri::command]
+pub fn create_identity(
+    state: State<'_, AppState>,
+    account_id: i64,
+    input: IdentityInput,
+) -> Result<i64> {
+    state.db.with(|c| identities::create(c, account_id, &input))
+}
+
+#[tauri::command]
+pub fn update_identity(state: State<'_, AppState>, id: i64, input: IdentityInput) -> Result<()> {
+    state.db.with(|c| identities::update(c, id, &input))
+}
+
+#[tauri::command]
+pub fn set_default_identity(state: State<'_, AppState>, id: i64) -> Result<()> {
+    state.db.with(|c| identities::set_default(c, id))
+}
+
+#[tauri::command]
+pub fn delete_identity(state: State<'_, AppState>, id: i64) -> Result<()> {
+    state.db.with(|c| identities::delete(c, id))
+}
+
+// --- Entwürfe ------------------------------------------------------------------
+
+fn own_addresses(c: &rusqlite::Connection, account_id: i64) -> Result<Vec<String>> {
+    Ok(identities::list(c, Some(account_id))?
+        .into_iter()
+        .map(|i| i.email)
+        .collect())
+}
+
+/// Legt einen Entwurf als Antwort/Weiterleitung auf eine archivierte Mail an.
+#[tauri::command]
+pub async fn prepare_draft(
+    state: State<'_, AppState>,
+    message_id: i64,
+    kind: DraftKind,
+) -> Result<Draft> {
+    let detail = state.db.with(|c| messages::get(c, message_id))?;
+    let account_id = detail.summary.account_id;
+    let raw = raw_mail(&state, message_id)?;
+    let (own, all_ids) = state.db.with(|c| {
+        Ok((
+            own_addresses(c, account_id)?,
+            identities::list(c, Some(account_id))?,
+        ))
+    })?;
+    // Identität: die angeschriebene, sonst Standard.
+    let first_pass = blocking({
+        let raw = raw.clone();
+        let own = own.clone();
+        move || compose::prepare(&raw, message_id, kind, &own, None)
+    })
+    .await?;
+    let identity = first_pass
+        .addressed_identity
+        .as_ref()
+        .and_then(|a| {
+            all_ids
+                .iter()
+                .find(|i| i.email.eq_ignore_ascii_case(a))
+                .cloned()
+        })
+        .or_else(|| all_ids.iter().find(|i| i.is_default).cloned())
+        .or_else(|| all_ids.first().cloned());
+    let prepared = blocking({
+        let identity = identity.clone();
+        move || compose::prepare(&raw, message_id, kind, &own, identity.as_ref())
+    })
+    .await?;
+
+    state.db.with(|c| {
+        let id = drafts::create(
+            c,
+            &NewDraft {
+                account_id,
+                identity_id: identity.as_ref().map(|i| i.id),
+                in_reply_to_message: Some(message_id),
+                kind,
+                to: &prepared.to,
+                cc: &prepared.cc,
+                subject: &prepared.subject,
+                body_html: &prepared.body_html,
+                attachments: &prepared.attachments,
+            },
+        )?;
+        drafts::get(c, id)
+    })
+}
+
+/// Leerer neuer Entwurf für ein Konto (Signatur der Standard-Identität).
+#[tauri::command]
+pub fn new_draft(state: State<'_, AppState>, account_id: i64) -> Result<Draft> {
+    state.db.with(|c| {
+        let identity = identities::default_for(c, account_id)?;
+        let body = format!(
+            "<div><br></div>{}",
+            compose::signature_block(identity.as_ref())
+        );
+        let id = drafts::create(
+            c,
+            &NewDraft {
+                account_id,
+                identity_id: identity.map(|i| i.id),
+                in_reply_to_message: None,
+                kind: DraftKind::New,
+                to: &[],
+                cc: &[],
+                subject: "",
+                body_html: &body,
+                attachments: &[],
+            },
+        )?;
+        drafts::get(c, id)
+    })
+}
+
+#[tauri::command]
+pub fn list_drafts(state: State<'_, AppState>) -> Result<Vec<Draft>> {
+    state.db.with(|c| drafts::list(c))
+}
+
+#[tauri::command]
+pub fn get_draft(state: State<'_, AppState>, id: i64) -> Result<Draft> {
+    state.db.with(|c| drafts::get(c, id))
+}
+
+#[tauri::command]
+pub fn update_draft(state: State<'_, AppState>, id: i64, update: DraftUpdate) -> Result<()> {
+    state.db.with(|c| drafts::update(c, id, &update))
+}
+
+#[tauri::command]
+pub fn delete_draft(state: State<'_, AppState>, id: i64) -> Result<()> {
+    state.db.with(|c| drafts::delete(c, id))?;
+    outbox::remove_draft_files(&state.paths, id);
+    Ok(())
+}
+
+/// Datei über den System-Dialog wählen und an den Entwurf hängen.
+#[tauri::command]
+pub async fn add_draft_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<Option<Draft>> {
+    use tauri_plugin_dialog::DialogExt;
+    let draft = state.db.with(|c| drafts::get(c, id))?;
+    let chosen = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Datei anhängen")
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| Error::Other(format!("Dialog abgebrochen: {e}")))?;
+    let Some(source) = chosen else {
+        return Ok(None);
+    };
+    let source = source
+        .into_path()
+        .map_err(|e| Error::Other(format!("Ungültige Datei: {e}")))?;
+    let name = crate::mail::body::safe_filename(
+        source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("anhang"),
+    );
+    let paths = state.paths.clone();
+    let (rel, size) = blocking(move || {
+        let dir = outbox::draft_dir(&paths, id);
+        std::fs::create_dir_all(&dir)?;
+        let target = dir.join(&name);
+        std::fs::copy(&source, &target)?;
+        let size = std::fs::metadata(&target)?.len() as usize;
+        Ok((format!("drafts/{id}/{name}"), size))
+    })
+    .await?;
+    let name = rel.rsplit('/').next().unwrap_or("anhang").to_string();
+    let mime = mime_from_name(&name).to_string();
+    let mut list = draft.attachments;
+    list.retain(|a| !matches!(a, DraftAttachment::File { path, .. } if *path == rel));
+    list.push(DraftAttachment::File {
+        path: rel,
+        name,
+        mime,
+        size,
+    });
+    state.db.with(|c| {
+        drafts::set_attachments(c, id, &list)?;
+        drafts::get(c, id).map(Some)
+    })
+}
+
+fn mime_from_name(name: &str) -> &'static str {
+    match name
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("txt") => "text/plain",
+        Some("csv") => "text/csv",
+        Some("zip") => "application/zip",
+        Some("ics") => "text/calendar",
+        Some("doc") => "application/msword",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _ => "application/octet-stream",
+    }
+}
+
+#[tauri::command]
+pub fn remove_draft_attachment(state: State<'_, AppState>, id: i64, index: usize) -> Result<Draft> {
+    let draft = state.db.with(|c| drafts::get(c, id))?;
+    let mut list = draft.attachments;
+    if index >= list.len() {
+        return Err(Error::NotFound(format!("Anhang {index}")));
+    }
+    if let DraftAttachment::File { path, .. } = list.remove(index) {
+        let _ = std::fs::remove_file(state.paths.resolve(&path));
+    }
+    state.db.with(|c| {
+        drafts::set_attachments(c, id, &list)?;
+        drafts::get(c, id)
+    })
+}
+
+// --- Adressbuch ---------------------------------------------------------------
+
+#[tauri::command]
+pub fn suggest_contacts(state: State<'_, AppState>, query: String) -> Result<Vec<Contact>> {
+    state.db.with(|c| contacts::suggest(c, &query, 8))
+}
+
+#[tauri::command]
+pub fn list_contacts(state: State<'_, AppState>) -> Result<Vec<Contact>> {
+    state.db.with(|c| contacts::list(c))
+}
+
+#[tauri::command]
+pub fn create_contact(state: State<'_, AppState>, input: ContactInput) -> Result<i64> {
+    state.db.with(|c| contacts::create(c, &input))
+}
+
+#[tauri::command]
+pub fn update_contact(state: State<'_, AppState>, id: i64, input: ContactInput) -> Result<()> {
+    state.db.with(|c| contacts::update(c, id, &input))
+}
+
+#[tauri::command]
+pub fn delete_contact(state: State<'_, AppState>, id: i64) -> Result<()> {
+    state.db.with(|c| contacts::delete(c, id))
+}
+
+/// Adressbuch aus dem Archiv neu aufbauen (manuelle Einträge bleiben).
+#[tauri::command]
+pub async fn rebuild_contacts(state: State<'_, AppState>) -> Result<usize> {
+    let db = state.db.clone();
+    blocking(move || db.with(contacts::rebuild_from_archive)).await
+}
+
+// --- Senden -------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_send_delay(state: State<'_, AppState>) -> Result<u32> {
+    state.db.with(|c| outbox::delay_seconds(c))
+}
+
+#[tauri::command]
+pub fn set_send_delay(state: State<'_, AppState>, seconds: u32) -> Result<()> {
+    state.db.with(|c| outbox::set_delay_seconds(c, seconds))
+}
+
+fn pending(state: &AppState) -> Result<std::sync::MutexGuard<'_, HashMap<i64, Arc<AtomicBool>>>> {
+    state
+        .pending_sends
+        .lock()
+        .map_err(|_| Error::Other("Sperre beschädigt".into()))
+}
+
+/// Sendet einen Entwurf. Wird nur nach dem Bestätigungsdialog aufgerufen.
+/// Mit eingestellter Verzögerung erst nach Ablauf, sofern nicht `cancel_send`
+/// dazwischenkommt. Danach lokale Ablage, Entwurf weg.
+#[tauri::command]
+pub async fn send_draft(app: AppHandle, state: State<'_, AppState>, id: i64) -> Result<SendStatus> {
+    let draft = state.db.with(|c| drafts::get(c, id))?;
+    let account = state.db.with(|c| accounts::get(c, draft.account_id))?;
+    let (smtp_host, smtp_port): (Option<String>, u16) = state.db.with(|c| {
+        Ok(c.query_row(
+            "SELECT smtp_host, smtp_port FROM accounts WHERE id = ?1",
+            [draft.account_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?)
+    })?;
+    let smtp_host = smtp_host.filter(|h| !h.is_empty()).ok_or_else(|| {
+        Error::Invalid("Für dieses Konto ist kein SMTP-Server eingetragen (Reiter „Konten“)".into())
+    })?;
+    let identity = state.db.with(|c| match draft.identity_id {
+        Some(i) => identities::get(c, i),
+        None => identities::default_for(c, draft.account_id)?
+            .ok_or_else(|| Error::Invalid("Keine Absenderadresse für dieses Konto".into())),
+    })?;
+    let reply = match draft.in_reply_to_message {
+        Some(m) => {
+            let orig = state.db.with(|c| messages::get(c, m))?;
+            ReplyHeaders::from_original(
+                orig.message_id.as_deref(),
+                orig_refs(&state, m)?.as_deref(),
+            )
+        }
+        None => ReplyHeaders::default(),
+    };
+
+    // Anhänge einsammeln.
+    let mut attachments = Vec::new();
+    for a in &draft.attachments {
+        match a {
+            DraftAttachment::Message {
+                message_id, part, ..
+            } => {
+                let raw = raw_mail(&state, *message_id)?;
+                let part = *part;
+                let (name, mime, bytes) =
+                    blocking(move || crate::mail::body::attachment_bytes(&raw, part)).await?;
+                attachments.push(OutgoingAttachment { name, mime, bytes });
+            }
+            DraftAttachment::File {
+                path, name, mime, ..
+            } => {
+                let bytes = std::fs::read(state.paths.resolve(path))
+                    .map_err(|e| Error::Other(format!("Anhang {name} nicht lesbar: {e}")))?;
+                attachments.push(OutgoingAttachment {
+                    name: name.clone(),
+                    mime: mime.clone(),
+                    bytes,
+                });
+            }
+        }
+    }
+
+    let (message, _mid) = compose::build(&Outgoing {
+        identity: &identity,
+        to: &draft.to,
+        cc: &draft.cc,
+        bcc: &draft.bcc,
+        subject: &draft.subject,
+        body_html: &draft.body_html,
+        reply: &reply,
+        attachments,
+    })?;
+
+    let report = {
+        let app = app.clone();
+        move |s: SendStatus| {
+            if let Err(e) = app.emit(SEND_STATUS_EVENT, s) {
+                log::warn!("Sendestatus konnte nicht gesendet werden: {e}");
+            }
+        }
+    };
+    let status = |phase: SendPhase, error: Option<String>, message_id: Option<i64>| SendStatus {
+        draft_id: id,
+        phase,
+        seconds_left: 0,
+        error,
+        message_id,
+    };
+
+    // Wartezeit mit „Rückgängig“.
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut p = pending(&state)?;
+        if p.contains_key(&id) {
+            return Err(Error::Invalid("Dieser Entwurf wird gerade gesendet".into()));
+        }
+        p.insert(id, cancel.clone());
+    }
+    let delay = state.db.with(|c| outbox::delay_seconds(c))?;
+    let go = outbox::wait_with_undo(id, delay, &cancel, &report).await;
+    if !go {
+        pending(&state)?.remove(&id);
+        let s = status(SendPhase::Cancelled, None, None);
+        report(s.clone());
+        return Ok(s);
+    }
+    report(status(SendPhase::Sending, None, None));
+
+    let password = blocking(move || secrets::get_password(account.id)).await?;
+    let result = smtp::send(
+        &SmtpConfig {
+            host: &smtp_host,
+            port: smtp_port,
+            username: &account.username,
+            password: &password,
+        },
+        message.clone(),
+    )
+    .await;
+    pending(&state)?.remove(&id);
+    if let Err(e) = result {
+        let s = status(SendPhase::Failed, Some(e.to_string()), None);
+        report(s);
+        return Err(e);
+    }
+
+    // Lokal ablegen, Konversation nachziehen, Entwurf entfernen.
+    let raw = message.formatted();
+    let db = state.db.clone();
+    let paths = state.paths.clone();
+    let account_id = draft.account_id;
+    let archived = blocking(move || {
+        let mid = db.with(|c| outbox::archive_sent(c, &paths, account_id, &raw))?;
+        db.with(|c| threads::rebuild(c, account_id))?;
+        db.with(|c| drafts::delete(c, id))?;
+        Ok(mid)
+    })
+    .await;
+    let message_id = match archived {
+        Ok(m) => Some(m),
+        Err(e) => {
+            // Gesendet ist gesendet; die Ablage nur melden.
+            log::warn!("Gesendete Mail nicht abgelegt: {e}");
+            None
+        }
+    };
+    outbox::remove_draft_files(&state.paths, id);
+    let s = status(SendPhase::Sent, None, message_id);
+    report(s.clone());
+    Ok(s)
+}
+
+fn orig_refs(state: &AppState, message_id: i64) -> Result<Option<String>> {
+    state.db.with(|c| {
+        Ok(c.query_row(
+            "SELECT refs FROM messages WHERE id = ?1",
+            [message_id],
+            |r| r.get(0),
+        )?)
+    })
+}
+
+#[tauri::command]
+pub fn cancel_send(state: State<'_, AppState>, id: i64) -> Result<bool> {
+    match pending(&state)?.get(&id) {
+        Some(c) => {
+            c.store(true, Ordering::Relaxed);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+// --- KI-Entwurf ----------------------------------------------------------------
+
+/// Schreibt mit der KI einen Textvorschlag für den Entwurf. Liefert HTML für
+/// den Editor; eingefügt wird es dort, gesendet nur über den Dialog.
+#[tauri::command]
+pub async fn ai_draft(state: State<'_, AppState>, id: i64, hint: Option<String>) -> Result<String> {
+    use crate::ai::AiSettings;
+    use crate::ai::draft::{self as ai_draft_mod, DraftInput};
+
+    let draft = state.db.with(|c| drafts::get(c, id))?;
+    let settings = state.db.with(|c| AiSettings::load(c))?;
+    let model = settings.model.clone().ok_or_else(|| {
+        Error::Invalid("Bitte zuerst unter „Einstellungen“ ein Modell wählen".into())
+    })?;
+    let key = blocking(secrets::get_ai_key).await?;
+    let client = MessagesClient::new(&settings.url, key)?;
+    let identity = state.db.with(|c| match draft.identity_id {
+        Some(i) => identities::get(c, i).map(Some),
+        None => identities::default_for(c, draft.account_id),
+    })?;
+    let sender_name = identity.map(|i| i.name).unwrap_or_default();
+
+    let (original, thread) = match draft.in_reply_to_message {
+        Some(m) => {
+            let orig = state.db.with(|c| messages::get(c, m))?;
+            let thread: Vec<(String, String)> = match orig.summary.thread_id {
+                Some(t) => state
+                    .db
+                    .with(|c| messages::list_by_thread(c, t))?
+                    .into_iter()
+                    .filter(|x| x.summary.id != m)
+                    .filter(|x| x.summary.date <= orig.summary.date)
+                    .map(|x| {
+                        (
+                            x.summary
+                                .from_name
+                                .or(x.summary.from_addr)
+                                .unwrap_or_default(),
+                            x.body_text.unwrap_or_default(),
+                        )
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+            (Some(orig), thread)
+        }
+        None => (None, Vec::new()),
+    };
+    let from = original
+        .as_ref()
+        .map(|o| match (&o.summary.from_name, &o.summary.from_addr) {
+            (Some(n), Some(a)) => format!("{n} <{a}>"),
+            (Some(n), None) => n.clone(),
+            (None, Some(a)) => a.clone(),
+            (None, None) => "(unbekannt)".into(),
+        });
+    let original_text = original
+        .as_ref()
+        .and_then(|o| o.body_text.clone())
+        .unwrap_or_default();
+    let subject = original.as_ref().and_then(|o| o.summary.subject.clone());
+    let text = ai_draft_mod::draft(
+        &client,
+        &model,
+        &DraftInput {
+            original_from: from.as_deref(),
+            original_subject: subject.as_deref(),
+            original_text: &original_text,
+            thread: &thread,
+            sender_name: &sender_name,
+            hint: hint.as_deref(),
+            forward: draft.kind == DraftKind::Forward,
+        },
+    )
+    .await?;
+    Ok(html::text_to_fragment(&text))
 }
