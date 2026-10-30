@@ -79,8 +79,18 @@ pub fn should_archive(folder: &RemoteFolder) -> bool {
         Some(d) if !d.is_empty() => folder.display_name.rsplit(d).next().unwrap_or(""),
         _ => folder.display_name.as_str(),
     };
-    let leaf = leaf.trim().to_lowercase();
-    !SKIPPED_NAMES.contains(&leaf.as_str())
+    let leaf = normalize_name(leaf);
+    !SKIPPED_NAMES.iter().any(|n| normalize_name(n) == leaf)
+}
+
+/// Kleinschreibung; Bindestrich, Unterstrich und Leerraum zählen gleich,
+/// „Junk-E-Mail“, „junk e-mail“ und „Junk_E_Mail“ sind also derselbe Name.
+fn normalize_name(name: &str) -> String {
+    name.to_lowercase()
+        .split(|c: char| c == '-' || c == '_' || c.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Reihenfolge: INBOX zuerst, „Alle Nachrichten“ (z. B. Gmail) zuletzt, damit
@@ -273,6 +283,9 @@ mod tests {
         assert!(!should_archive(&folder("Papierkorb", None)));
         assert!(!should_archive(&folder("INBOX/Spam", None)));
         assert!(!should_archive(&folder("Gel&APY-schte Elemente", None)));
+        assert!(!should_archive(&folder("Junk-E-Mail", None)));
+        assert!(!should_archive(&folder("Deleted_Items", None)));
+        assert!(should_archive(&folder("Junk-Food-Rezepte", None)));
         let mut noselect = folder("[Gmail]", None);
         noselect.selectable = false;
         assert!(!should_archive(&noselect));
