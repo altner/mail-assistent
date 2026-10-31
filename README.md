@@ -1,14 +1,38 @@
 # Mail-Assistent
 
-Lokales Archiv für private IMAP-Postfächer mit (später) KI-Kategorisierung.
+> **Frühe Alpha.** Der Name „Mail-Assistent“ ist ein Arbeitstitel und ändert sich noch.
+> Datenformat und Oberfläche können sich zwischen Versionen ändern; die Datenbank wird
+> dabei automatisch migriert.
+
+Lokales Archiv für private IMAP-Postfächer mit KI-Kategorisierung.
 Desktop-App mit Tauri v2 (Rust) und Svelte 5 + TypeScript. Die Server-Postfächer
 bleiben unangetastet und dienen nur als Backup.
 
-Stand: **Phase 5**. Konten anlegen, Mails nur lesend abrufen und lokal archivieren,
-Mail-Liste als einzelne Mails oder Konversationen, Volltextsuche, HTML-Anzeige im
-abgeschotteten iframe mit Anhängen, KI-Vorschläge für Kategorien und Tags mit Review,
-Antworten und Weiterleiten mit Rich-Text-Editor, Adressbuch, Signaturen, KI-Entwurf und
-Versand nur nach Bestätigung.
+Stand: **Phase 6**. Konten anlegen, Mails nur lesend abrufen und lokal archivieren (alle
+Konten gleichzeitig), Mail-Liste als einzelne Mails oder Konversationen, Volltextsuche,
+HTML-Anzeige im abgeschotteten iframe mit Anhängen, KI-Vorschläge für Kategorien und Tags
+mit Review, Antworten und Weiterleiten mit Rich-Text-Editor, Adressbuch, Signaturen,
+KI-Entwurf und Versand nur nach Bestätigung. Builds für macOS, Windows und Linux.
+
+## Ziel: Mail, Kalender, Notizen und To-dos in einer App
+
+Vorbild ist Outlook: eine App für den Arbeitsalltag statt mehrerer einzelner. Neben der Mail
+kommen später dazu:
+
+- **Kalender**: Termine mit Tages-, Wochen- und Monatsansicht
+- **Notizen**: freie Notizen mit Rich-Text
+- **To-do-Liste**: Aufgaben mit Fälligkeit, Erledigt-Status und Priorität
+
+Alles soll miteinander **verknüpfbar** sein, zum Beispiel:
+
+- aus einer Mail ein To-do oder einen Termin anlegen, mit Verweis zurück auf die Mail
+- an einen Termin Notizen und die zugehörigen Mails hängen
+- an jeder Mail, jedem Termin, jeder Notiz und jedem To-do sehen, womit sie verknüpft sind
+
+Die KI kann dabei helfen, etwa ein To-do oder einen Termin aus einer Mail vorschlagen. Es gilt
+Regel 4: Sie schlägt nur vor, angelegt wird erst nach Bestätigung. Wie auch bei der Mail liegen
+alle Daten lokal. Ob und wie Kalender mit Servern abgeglichen werden (CalDAV, `.ics`-Einladungen
+in Mails), wird vor der jeweiligen Phase entschieden.
 
 ## Harte Regeln
 
@@ -309,6 +333,8 @@ Zusätzlich zum vorgegebenen Schema gibt es:
   Adressbuch, Signaturen, mehrere Absenderadressen und KI-Entwurf
 - ~~**6** mehrere Postfächer parallel, Windows/Linux, Signierung~~ erledigt bis auf Developer ID
   und Windows-Zertifikat (bisher nur ad hoc signiert)
+- Danach: Kalender, Notizen und To-dos samt Verknüpfungen (siehe „Ziel“ oben); Reihenfolge
+  und Zuschnitt der Phasen stehen noch nicht fest.
 
 Noch offen: Konto bearbeiten oder löschen, Passwort ändern, Gelesen-Status
 bereits archivierter Mails aktualisieren (bisher nur beim ersten Abruf), STARTTLS (IMAP und
