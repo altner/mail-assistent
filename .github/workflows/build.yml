@@ -1,6 +1,6 @@
 # Baut die Installer für macOS, Windows und Linux. Läuft nur auf Anfrage
 # (Actions → Bauen → Run workflow) oder bei einem Versions-Tag `v*`.
-# Signiert wird bisher nur ad hoc (macOS), siehe README.
+# Signiert wird bisher nur ad hoc (macOS), siehe README unter „Builds“.
 name: Bauen
 
 on:
