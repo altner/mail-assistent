@@ -73,6 +73,16 @@ Zwei GitHub-Actions-Workflows in `.github/workflows/`:
   (macOS-Minuten zählen bei privaten Repos zehnfach). Die Dateien liegen danach als
   Artefakte am Lauf.
 
+**Neue Version veröffentlichen:** Version in `src-tauri/tauri.conf.json` (und passend in
+`package.json` und `src-tauri/Cargo.toml`) erhöhen, committen, dann Tag setzen und pushen:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+Der Workflow prüft, dass Tag und Version übereinstimmen, baut auf allen drei Systemen und legt
+unter „Releases“ ein Release mit allen Installern und einer Installationsanleitung an.
+
 ### Signierung und erster Start
 
 Die App ist nicht notarisiert und nur ad hoc signiert. Deshalb warnt das System beim ersten Start:
